@@ -1,0 +1,1094 @@
+{
+  "strategy": "reference_order",
+  "ordering": "reference",
+  "success": true,
+  "failure_reason": "",
+  "support_groups_total": 12,
+  "support_groups_observed": 12,
+  "probe_count": 12,
+  "discrete_action_steps": 927,
+  "max_vertex_error_mm": 1.2434497875801753e-14,
+  "mean_vertex_error_mm": 1.3363514014041133e-15,
+  "max_contact_overlap_area": 0.0,
+  "max_probe_path_overlap_area": 0.0,
+  "max_continuity_gap": 0.0,
+  "simple_polygon_alpha": 1.0,
+  "estimated_polygon_self_intersections": [],
+  "estimated_vertices": [
+    [
+      3.6017189410476056e-15,
+      0.0
+    ],
+    [
+      9.999999999999988,
+      -60.0
+    ],
+    [
+      20.0,
+      -60.0
+    ],
+    [
+      20.0,
+      -20.0
+    ],
+    [
+      80.0,
+      -20.0
+    ],
+    [
+      80.0,
+      -60.0
+    ],
+    [
+      100.0,
+      -60.0
+    ],
+    [
+      100.0,
+      -20.0
+    ],
+    [
+      160.0,
+      -20.0
+    ],
+    [
+      160.0,
+      -60.0
+    ],
+    [
+      180.0,
+      -60.0
+    ],
+    [
+      180.0,
+      0.0
+    ]
+  ],
+  "prior_vertices": [
+    [
+      13.0,
+      -4.333333333333332
+    ],
+    [
+      21.555555555555543,
+      -55.66666666666667
+    ],
+    [
+      30.111111111111107,
+      -55.66666666666667
+    ],
+    [
+      30.111111111111107,
+      -21.444444444444443
+    ],
+    [
+      81.44444444444444,
+      -21.444444444444443
+    ],
+    [
+      81.44444444444444,
+      -55.66666666666667
+    ],
+    [
+      98.55555555555556,
+      -55.66666666666667
+    ],
+    [
+      98.55555555555556,
+      -21.444444444444443
+    ],
+    [
+      149.88888888888889,
+      -21.444444444444443
+    ],
+    [
+      149.88888888888889,
+      -55.66666666666667
+    ],
+    [
+      167.0,
+      -55.66666666666667
+    ],
+    [
+      167.0,
+      -4.333333333333332
+    ]
+  ],
+  "raw_obstacle_ref_vertices": [
+    [
+      500.0,
+      500.0
+    ],
+    [
+      507.0,
+      458.0
+    ],
+    [
+      514.0,
+      458.0
+    ],
+    [
+      514.0,
+      486.0
+    ],
+    [
+      556.0,
+      486.0
+    ],
+    [
+      556.0,
+      458.0
+    ],
+    [
+      570.0,
+      458.0
+    ],
+    [
+      570.0,
+      486.0
+    ],
+    [
+      612.0,
+      486.0
+    ],
+    [
+      612.0,
+      458.0
+    ],
+    [
+      626.0,
+      458.0
+    ],
+    [
+      626.0,
+      500.0
+    ]
+  ],
+  "observed_supports": {
+    "e00_oblique_-12.111": {
+      "axis": "oblique",
+      "ref_const": -12.110725398161321,
+      "min_const": -235.0905518466609,
+      "max_const": 67.40358479519647,
+      "observed_const": -3.552713678800501e-15,
+      "normal": [
+        -0.9863939238321437,
+        -0.164398987305357
+      ],
+      "tangent": [
+        0.164398987305357,
+        -0.9863939238321437
+      ],
+      "edge_indices": [
+        0
+      ]
+    },
+    "e01_horizontal_55.667": {
+      "axis": "horizontal",
+      "ref_const": 55.66666666666667,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 60.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        1
+      ]
+    },
+    "e02_vertical_30.111": {
+      "axis": "vertical",
+      "ref_const": 30.111111111111107,
+      "min_const": -50.0,
+      "max_const": 230.0,
+      "observed_const": 20.0,
+      "normal": [
+        1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        1.0
+      ],
+      "edge_indices": [
+        2
+      ]
+    },
+    "e03_horizontal_21.444": {
+      "axis": "horizontal",
+      "ref_const": 21.444444444444443,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 20.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        3
+      ]
+    },
+    "e04_vertical_-81.444": {
+      "axis": "vertical",
+      "ref_const": -81.44444444444444,
+      "min_const": -230.0,
+      "max_const": 50.0,
+      "observed_const": -80.0,
+      "normal": [
+        -1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        -1.0
+      ],
+      "edge_indices": [
+        4
+      ]
+    },
+    "e05_horizontal_55.667": {
+      "axis": "horizontal",
+      "ref_const": 55.66666666666667,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 60.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        5
+      ]
+    },
+    "e06_vertical_98.556": {
+      "axis": "vertical",
+      "ref_const": 98.55555555555556,
+      "min_const": -50.0,
+      "max_const": 230.0,
+      "observed_const": 100.0,
+      "normal": [
+        1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        1.0
+      ],
+      "edge_indices": [
+        6
+      ]
+    },
+    "e07_horizontal_21.444": {
+      "axis": "horizontal",
+      "ref_const": 21.444444444444443,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 20.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        7
+      ]
+    },
+    "e08_vertical_-149.889": {
+      "axis": "vertical",
+      "ref_const": -149.88888888888889,
+      "min_const": -230.0,
+      "max_const": 50.0,
+      "observed_const": -160.0,
+      "normal": [
+        -1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        -1.0
+      ],
+      "edge_indices": [
+        8
+      ]
+    },
+    "e09_horizontal_55.667": {
+      "axis": "horizontal",
+      "ref_const": 55.66666666666667,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 60.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        9
+      ]
+    },
+    "e10_vertical_167.000": {
+      "axis": "vertical",
+      "ref_const": 167.0,
+      "min_const": -50.0,
+      "max_const": 230.0,
+      "observed_const": 180.0,
+      "normal": [
+        1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        1.0
+      ],
+      "edge_indices": [
+        10
+      ]
+    },
+    "e11_horizontal_-4.333": {
+      "axis": "horizontal",
+      "ref_const": -4.333333333333332,
+      "min_const": -110.0,
+      "max_const": 50.0,
+      "observed_const": 0.0,
+      "normal": [
+        0.0,
+        1.0
+      ],
+      "tangent": [
+        -1.0,
+        0.0
+      ],
+      "edge_indices": [
+        11
+      ]
+    }
+  },
+  "records": [
+    {
+      "step": 0,
+      "strategy": "reference_order",
+      "group_key": "e00_oblique_-12.111",
+      "target_edge": 0,
+      "action": [
+        1.0,
+        0.0
+      ],
+      "move_start": [
+        -50.0,
+        -110.0
+      ],
+      "start": [
+        -50.0,
+        -110.0
+      ],
+      "probe_start": [
+        -25.0,
+        -34.72972972972972
+      ],
+      "contact_ref": [
+        -23.37837837837838,
+        -34.72972972972972
+      ],
+      "trajectory_points": [
+        [
+          -50.0,
+          -110.0
+        ],
+        [
+          -25.0,
+          -110.0
+        ],
+        [
+          -25.0,
+          -34.72972972972972
+        ],
+        [
+          -23.37837837837838,
+          -34.72972972972972
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 1.6216216216216204,
+      "transit_steps": 67,
+      "approach_steps": 2,
+      "total_steps": 69,
+      "true_edges": [
+        0
+      ],
+      "candidate_edges": [
+        0,
+        4,
+        8
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 7.653520426241227,
+      "figure": "step_00_e00_oblique_-12.111.png"
+    },
+    {
+      "step": 1,
+      "strategy": "reference_order",
+      "group_key": "e01_horizontal_55.667",
+      "target_edge": 1,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        -23.37837837837838,
+        -34.72972972972972
+      ],
+      "start": [
+        -23.37837837837838,
+        -34.72972972972972
+      ],
+      "probe_start": [
+        25.833333333333325,
+        -110.0
+      ],
+      "contact_ref": [
+        25.833333333333325,
+        -85.0
+      ],
+      "trajectory_points": [
+        [
+          -23.37837837837838,
+          -34.72972972972972
+        ],
+        [
+          -23.37837837837838,
+          -110.0
+        ],
+        [
+          25.833333333333325,
+          -110.0
+        ],
+        [
+          25.833333333333325,
+          -85.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 25.0,
+      "transit_steps": 83,
+      "approach_steps": 17,
+      "total_steps": 169,
+      "true_edges": [
+        1
+      ],
+      "candidate_edges": [
+        1,
+        3,
+        5,
+        7,
+        9
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 7.213307400100773,
+      "figure": "step_01_e01_horizontal_55.667.png"
+    },
+    {
+      "step": 2,
+      "strategy": "reference_order",
+      "group_key": "e04_vertical_-81.444",
+      "target_edge": 2,
+      "action": [
+        1.0,
+        0.0
+      ],
+      "move_start": [
+        25.833333333333325,
+        -85.0
+      ],
+      "start": [
+        25.833333333333325,
+        -85.0
+      ],
+      "probe_start": [
+        25.833333333333325,
+        -85.0
+      ],
+      "contact_ref": [
+        55.0,
+        -85.0
+      ],
+      "trajectory_points": [
+        [
+          25.833333333333325,
+          -85.0
+        ],
+        [
+          55.0,
+          -85.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 29.166666666666675,
+      "transit_steps": 0,
+      "approach_steps": 20,
+      "total_steps": 189,
+      "true_edges": [
+        4
+      ],
+      "candidate_edges": [
+        4,
+        8
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 7.143914938128187,
+      "figure": "step_02_e04_vertical_-81.444.png"
+    },
+    {
+      "step": 3,
+      "strategy": "reference_order",
+      "group_key": "e08_vertical_-149.889",
+      "target_edge": 2,
+      "action": [
+        1.0,
+        0.0
+      ],
+      "move_start": [
+        55.0,
+        -85.0
+      ],
+      "start": [
+        55.0,
+        -85.0
+      ],
+      "probe_start": [
+        55.0,
+        -85.0
+      ],
+      "contact_ref": [
+        135.0,
+        -85.0
+      ],
+      "trajectory_points": [
+        [
+          55.0,
+          -85.0
+        ],
+        [
+          135.0,
+          -85.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 80.0,
+      "transit_steps": 0,
+      "approach_steps": 54,
+      "total_steps": 243,
+      "true_edges": [
+        8
+      ],
+      "candidate_edges": [
+        8
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 5.857535938771872,
+      "figure": "step_03_e08_vertical_-149.889.png"
+    },
+    {
+      "step": 4,
+      "strategy": "reference_order",
+      "group_key": "e06_vertical_98.556",
+      "target_edge": 2,
+      "action": [
+        -1.0,
+        0.0
+      ],
+      "move_start": [
+        135.0,
+        -85.0
+      ],
+      "start": [
+        135.0,
+        -85.0
+      ],
+      "probe_start": [
+        145.11111111111111,
+        -85.0
+      ],
+      "contact_ref": [
+        125.0,
+        -85.0
+      ],
+      "trajectory_points": [
+        [
+          135.0,
+          -85.0
+        ],
+        [
+          145.11111111111111,
+          -85.0
+        ],
+        [
+          125.0,
+          -85.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 20.111111111111114,
+      "transit_steps": 7,
+      "approach_steps": 14,
+      "total_steps": 264,
+      "true_edges": [
+        6
+      ],
+      "candidate_edges": [
+        2,
+        6,
+        10
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 5.788143476799288,
+      "figure": "step_04_e06_vertical_98.556.png"
+    },
+    {
+      "step": 5,
+      "strategy": "reference_order",
+      "group_key": "e09_horizontal_55.667",
+      "target_edge": 2,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        125.0,
+        -85.0
+      ],
+      "start": [
+        125.0,
+        -85.0
+      ],
+      "probe_start": [
+        145.11111111111111,
+        -110.0
+      ],
+      "contact_ref": [
+        145.11111111111111,
+        -85.0
+      ],
+      "trajectory_points": [
+        [
+          125.0,
+          -85.0
+        ],
+        [
+          125.0,
+          -110.0
+        ],
+        [
+          145.11111111111111,
+          -110.0
+        ],
+        [
+          145.11111111111111,
+          -85.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 25.0,
+      "transit_steps": 31,
+      "approach_steps": 17,
+      "total_steps": 312,
+      "true_edges": [
+        9
+      ],
+      "candidate_edges": [
+        1,
+        3,
+        7,
+        9
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 5.368432099516262,
+      "figure": "step_05_e09_horizontal_55.667.png"
+    },
+    {
+      "step": 6,
+      "strategy": "reference_order",
+      "group_key": "e10_vertical_167.000",
+      "target_edge": 2,
+      "action": [
+        -1.0,
+        0.0
+      ],
+      "move_start": [
+        145.11111111111111,
+        -85.0
+      ],
+      "start": [
+        145.11111111111111,
+        -85.0
+      ],
+      "probe_start": [
+        230.0,
+        -85.0
+      ],
+      "contact_ref": [
+        205.0,
+        -85.0
+      ],
+      "trajectory_points": [
+        [
+          145.11111111111111,
+          -85.0
+        ],
+        [
+          230.0,
+          -85.0
+        ],
+        [
+          205.0,
+          -85.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 25.0,
+      "transit_steps": 57,
+      "approach_steps": 17,
+      "total_steps": 386,
+      "true_edges": [
+        10
+      ],
+      "candidate_edges": [
+        2,
+        10
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 10.213764617139015,
+      "mean_vertex_error": 3.5042762777887915,
+      "figure": "step_06_e10_vertical_167.000.png"
+    },
+    {
+      "step": 7,
+      "strategy": "reference_order",
+      "group_key": "e11_horizontal_-4.333",
+      "target_edge": 2,
+      "action": [
+        0.0,
+        -1.0
+      ],
+      "move_start": [
+        205.0,
+        -85.0
+      ],
+      "start": [
+        205.0,
+        -85.0
+      ],
+      "probe_start": [
+        145.11111111111111,
+        25.0
+      ],
+      "contact_ref": [
+        145.11111111111111,
+        25.0
+      ],
+      "trajectory_points": [
+        [
+          205.0,
+          -85.0
+        ],
+        [
+          205.0,
+          25.0
+        ],
+        [
+          145.11111111111111,
+          25.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 0.0,
+      "transit_steps": 74,
+      "approach_steps": 40,
+      "total_steps": 500,
+      "true_edges": [
+        11
+      ],
+      "candidate_edges": [
+        11
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 10.213764617139015,
+      "mean_vertex_error": 2.7770729773541767,
+      "figure": "step_07_e11_horizontal_-4.333.png"
+    },
+    {
+      "step": 8,
+      "strategy": "reference_order",
+      "group_key": "e07_horizontal_21.444",
+      "target_edge": 7,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        145.11111111111111,
+        25.0
+      ],
+      "start": [
+        145.11111111111111,
+        25.0
+      ],
+      "probe_start": [
+        125.1875,
+        -85.0
+      ],
+      "contact_ref": [
+        125.1875,
+        -45.0
+      ],
+      "trajectory_points": [
+        [
+          145.11111111111111,
+          25.0
+        ],
+        [
+          205.0,
+          25.0
+        ],
+        [
+          205.0,
+          -85.0
+        ],
+        [
+          125.1875,
+          -85.0
+        ],
+        [
+          125.1875,
+          -45.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 40.0,
+      "transit_steps": 167,
+      "approach_steps": 27,
+      "total_steps": 694,
+      "true_edges": [
+        7
+      ],
+      "candidate_edges": [
+        3,
+        5,
+        7
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 10.213764617139015,
+      "mean_vertex_error": 2.5363322366134367,
+      "figure": "step_08_e07_horizontal_21.444.png"
+    },
+    {
+      "step": 9,
+      "strategy": "reference_order",
+      "group_key": "e03_horizontal_21.444",
+      "target_edge": 3,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        125.1875,
+        -45.0
+      ],
+      "start": [
+        125.1875,
+        -45.0
+      ],
+      "probe_start": [
+        45.1875,
+        -85.0
+      ],
+      "contact_ref": [
+        45.1875,
+        -45.0
+      ],
+      "trajectory_points": [
+        [
+          125.1875,
+          -45.0
+        ],
+        [
+          125.1875,
+          -110.0
+        ],
+        [
+          45.1875,
+          -110.0
+        ],
+        [
+          45.1875,
+          -85.0
+        ],
+        [
+          45.1875,
+          -45.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 40.0,
+      "transit_steps": 114,
+      "approach_steps": 27,
+      "total_steps": 835,
+      "true_edges": [
+        3
+      ],
+      "candidate_edges": [
+        3
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 10.111111111111107,
+      "mean_vertex_error": 2.4074074074074074,
+      "figure": "step_09_e03_horizontal_21.444.png"
+    },
+    {
+      "step": 10,
+      "strategy": "reference_order",
+      "group_key": "e02_vertical_30.111",
+      "target_edge": 2,
+      "action": [
+        -1.0,
+        0.0
+      ],
+      "move_start": [
+        45.1875,
+        -45.0
+      ],
+      "start": [
+        45.1875,
+        -45.0
+      ],
+      "probe_start": [
+        45.1875,
+        -45.0
+      ],
+      "contact_ref": [
+        45.0,
+        -45.0
+      ],
+      "trajectory_points": [
+        [
+          45.1875,
+          -45.0
+        ],
+        [
+          45.0,
+          -45.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 0.1875,
+      "transit_steps": 0,
+      "approach_steps": 1,
+      "total_steps": 836,
+      "true_edges": [
+        2
+      ],
+      "candidate_edges": [
+        2
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 4.333333333333329,
+      "mean_vertex_error": 0.7222222222222228,
+      "figure": "step_10_e02_vertical_30.111.png"
+    },
+    {
+      "step": 11,
+      "strategy": "reference_order",
+      "group_key": "e05_horizontal_55.667",
+      "target_edge": 5,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        45.0,
+        -45.0
+      ],
+      "start": [
+        45.0,
+        -45.0
+      ],
+      "probe_start": [
+        90.0,
+        -110.0
+      ],
+      "contact_ref": [
+        90.0,
+        -85.0
+      ],
+      "trajectory_points": [
+        [
+          45.0,
+          -45.0
+        ],
+        [
+          45.0,
+          -110.0
+        ],
+        [
+          90.0,
+          -110.0
+        ],
+        [
+          90.0,
+          -85.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 25.0,
+      "transit_steps": 74,
+      "approach_steps": 17,
+      "total_steps": 927,
+      "true_edges": [
+        5
+      ],
+      "candidate_edges": [
+        5
+      ],
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 1.2434497875801753e-14,
+      "mean_vertex_error": 1.3363514014041133e-15,
+      "figure": "step_11_e05_horizontal_55.667.png"
+    }
+  ]
+}

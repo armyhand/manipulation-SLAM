@@ -21,7 +21,7 @@ public:
   PosePlanningNode(const rclcpp::NodeOptions &options) : Node("pose_planning", options) {
     is_init_ = false;
     amplitude_ = 0.05;
-    frequency_ = 0.5;
+    frequency_ = 0.1;
     sampling_time_ = 0.01;
     phase_ = 0.0;
 
@@ -39,7 +39,7 @@ protected:
       geometry_msgs::msg::Pose cartesian_pose_command = initial_pose_;
 
       phase_ = phase_ + 2 * M_PI * frequency_ * sampling_time_;
-      cartesian_pose_command.position.z += amplitude_ * sin(phase_);
+      cartesian_pose_command.position.x += amplitude_ * sin(phase_);
 
       pose_pub_->publish(cartesian_pose_command);
     }

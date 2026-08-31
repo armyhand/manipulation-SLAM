@@ -1,0 +1,1486 @@
+{
+  "strategy": "axis_anchor_order",
+  "ordering": "axis_anchors",
+  "success": true,
+  "failure_reason": "",
+  "support_groups_total": 12,
+  "support_groups_observed": 12,
+  "hypothesis_count": 1,
+  "contact_pair_converged": true,
+  "probe_count": 12,
+  "discrete_action_steps": 1418,
+  "max_vertex_error_mm": 3.552713678800501e-15,
+  "mean_vertex_error_mm": 4.461310957770253e-16,
+  "max_contact_overlap_area": 0.0,
+  "max_probe_path_overlap_area": 0.0,
+  "max_continuity_gap": 0.0,
+  "simple_polygon_alpha": 1.0,
+  "max_vertex_range_diameter_mm": 1.2000000000000028,
+  "vertex_uncertainty": [
+    {
+      "center": [
+        1.7763568394002505e-15,
+        0.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2
+    },
+    {
+      "center": [
+        10.000000000000004,
+        -60.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        20.0,
+        -60.0
+      ],
+      "radius_x": 0.6000000000000014,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2000000000000028,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        20.0,
+        -20.0
+      ],
+      "radius_x": 0.6000000000000014,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2000000000000028,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        80.0,
+        -20.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        80.0,
+        -60.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        100.0,
+        -60.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        100.0,
+        -20.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        160.0,
+        -20.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        160.0,
+        -60.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        180.0,
+        -60.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6000000000000014,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2000000000000028
+    },
+    {
+      "center": [
+        180.0,
+        0.0
+      ],
+      "radius_x": 0.6,
+      "radius_y": 0.6,
+      "diameter_x": 1.2,
+      "diameter_y": 1.2
+    }
+  ],
+  "estimated_polygon_self_intersections": [],
+  "estimated_vertices": [
+    [
+      1.8008594705238028e-15,
+      0.0
+    ],
+    [
+      10.000000000000004,
+      -60.0
+    ],
+    [
+      20.0,
+      -60.0
+    ],
+    [
+      20.0,
+      -20.0
+    ],
+    [
+      80.0,
+      -20.0
+    ],
+    [
+      80.0,
+      -60.0
+    ],
+    [
+      100.0,
+      -60.0
+    ],
+    [
+      100.0,
+      -20.0
+    ],
+    [
+      160.0,
+      -20.0
+    ],
+    [
+      160.0,
+      -60.0
+    ],
+    [
+      180.0,
+      -60.0
+    ],
+    [
+      180.0,
+      0.0
+    ]
+  ],
+  "estimated_contours": [
+    [
+      [
+        1.8008594705238028e-15,
+        0.0
+      ],
+      [
+        10.000000000000004,
+        -60.0
+      ],
+      [
+        20.0,
+        -60.0
+      ],
+      [
+        20.0,
+        -20.0
+      ],
+      [
+        80.0,
+        -20.0
+      ],
+      [
+        80.0,
+        -60.0
+      ],
+      [
+        100.0,
+        -60.0
+      ],
+      [
+        100.0,
+        -20.0
+      ],
+      [
+        160.0,
+        -20.0
+      ],
+      [
+        160.0,
+        -60.0
+      ],
+      [
+        180.0,
+        -60.0
+      ],
+      [
+        180.0,
+        0.0
+      ]
+    ]
+  ],
+  "hypotheses": [
+    {
+      "observed": {
+        "0": -1.7763568394002505e-15,
+        "1": 60.0,
+        "2": 20.0,
+        "3": 20.0,
+        "4": -80.0,
+        "5": 60.0,
+        "6": 100.0,
+        "7": 20.0,
+        "8": -160.0,
+        "9": 60.0,
+        "10": 180.0,
+        "11": 0.0
+      },
+      "contact_pairs": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          11
+        ],
+        [
+          7,
+          7
+        ],
+        [
+          8,
+          9
+        ],
+        [
+          9,
+          3
+        ],
+        [
+          10,
+          1
+        ],
+        [
+          11,
+          5
+        ]
+      ]
+    }
+  ],
+  "prior_vertices": [
+    [
+      13.0,
+      -4.333333333333336
+    ],
+    [
+      21.555555555555557,
+      -55.666666666666664
+    ],
+    [
+      30.111111111111114,
+      -55.666666666666664
+    ],
+    [
+      30.111111111111114,
+      -21.444444444444443
+    ],
+    [
+      81.44444444444444,
+      -21.444444444444443
+    ],
+    [
+      81.44444444444444,
+      -55.666666666666664
+    ],
+    [
+      98.55555555555556,
+      -55.666666666666664
+    ],
+    [
+      98.55555555555556,
+      -21.444444444444443
+    ],
+    [
+      149.88888888888889,
+      -21.444444444444443
+    ],
+    [
+      149.88888888888889,
+      -55.666666666666664
+    ],
+    [
+      167.0,
+      -55.666666666666664
+    ],
+    [
+      167.0,
+      -4.333333333333336
+    ]
+  ],
+  "prior_contours": [
+    [
+      [
+        13.0,
+        -4.333333333333336
+      ],
+      [
+        21.555555555555557,
+        -55.666666666666664
+      ],
+      [
+        30.111111111111114,
+        -55.666666666666664
+      ],
+      [
+        30.111111111111114,
+        -21.444444444444443
+      ],
+      [
+        81.44444444444444,
+        -21.444444444444443
+      ],
+      [
+        81.44444444444444,
+        -55.666666666666664
+      ],
+      [
+        98.55555555555556,
+        -55.666666666666664
+      ],
+      [
+        98.55555555555556,
+        -21.444444444444443
+      ],
+      [
+        149.88888888888889,
+        -21.444444444444443
+      ],
+      [
+        149.88888888888889,
+        -55.666666666666664
+      ],
+      [
+        167.0,
+        -55.666666666666664
+      ],
+      [
+        167.0,
+        -4.333333333333336
+      ]
+    ]
+  ],
+  "raw_obstacle_ref_vertices": [
+    [
+      500.0,
+      500.0
+    ],
+    [
+      501.0,
+      494.0
+    ],
+    [
+      502.0,
+      494.0
+    ],
+    [
+      502.0,
+      498.0
+    ],
+    [
+      508.0,
+      498.0
+    ],
+    [
+      508.0,
+      494.0
+    ],
+    [
+      510.0,
+      494.0
+    ],
+    [
+      510.0,
+      498.0
+    ],
+    [
+      516.0,
+      498.0
+    ],
+    [
+      516.0,
+      494.0
+    ],
+    [
+      518.0,
+      494.0
+    ],
+    [
+      518.0,
+      500.0
+    ]
+  ],
+  "raw_obstacle_ref_contours": [
+    [
+      [
+        500.0,
+        500.0
+      ],
+      [
+        501.0,
+        494.0
+      ],
+      [
+        502.0,
+        494.0
+      ],
+      [
+        502.0,
+        498.0
+      ],
+      [
+        508.0,
+        498.0
+      ],
+      [
+        508.0,
+        494.0
+      ],
+      [
+        510.0,
+        494.0
+      ],
+      [
+        510.0,
+        498.0
+      ],
+      [
+        516.0,
+        498.0
+      ],
+      [
+        516.0,
+        494.0
+      ],
+      [
+        518.0,
+        494.0
+      ],
+      [
+        518.0,
+        500.0
+      ]
+    ]
+  ],
+  "observed_supports": {
+    "e00_oblique_-12.111": {
+      "axis": "oblique",
+      "ref_const": -12.11072539816132,
+      "min_const": -235.09055184666093,
+      "max_const": 67.4035847951965,
+      "observed_const": -1.7763568394002505e-15,
+      "normal": [
+        -0.9863939238321437,
+        -0.16439898730535732
+      ],
+      "tangent": [
+        0.16439898730535732,
+        -0.9863939238321437
+      ],
+      "edge_indices": [
+        0
+      ]
+    },
+    "e01_horizontal_55.667": {
+      "axis": "horizontal",
+      "ref_const": 55.666666666666664,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 60.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        1
+      ]
+    },
+    "e02_vertical_30.111": {
+      "axis": "vertical",
+      "ref_const": 30.111111111111114,
+      "min_const": -50.0,
+      "max_const": 230.0,
+      "observed_const": 20.0,
+      "normal": [
+        1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        1.0
+      ],
+      "edge_indices": [
+        2
+      ]
+    },
+    "e03_horizontal_21.444": {
+      "axis": "horizontal",
+      "ref_const": 21.444444444444443,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 20.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        3
+      ]
+    },
+    "e04_vertical_-81.444": {
+      "axis": "vertical",
+      "ref_const": -81.44444444444444,
+      "min_const": -230.0,
+      "max_const": 50.0,
+      "observed_const": -80.0,
+      "normal": [
+        -1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        -1.0
+      ],
+      "edge_indices": [
+        4
+      ]
+    },
+    "e05_horizontal_55.667": {
+      "axis": "horizontal",
+      "ref_const": 55.666666666666664,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 60.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        5
+      ]
+    },
+    "e06_vertical_98.556": {
+      "axis": "vertical",
+      "ref_const": 98.55555555555556,
+      "min_const": -50.0,
+      "max_const": 230.0,
+      "observed_const": 100.0,
+      "normal": [
+        1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        1.0
+      ],
+      "edge_indices": [
+        6
+      ]
+    },
+    "e07_horizontal_21.444": {
+      "axis": "horizontal",
+      "ref_const": 21.444444444444443,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 20.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        7
+      ]
+    },
+    "e08_vertical_-149.889": {
+      "axis": "vertical",
+      "ref_const": -149.88888888888889,
+      "min_const": -230.0,
+      "max_const": 50.0,
+      "observed_const": -160.0,
+      "normal": [
+        -1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        -1.0
+      ],
+      "edge_indices": [
+        8
+      ]
+    },
+    "e09_horizontal_55.667": {
+      "axis": "horizontal",
+      "ref_const": 55.666666666666664,
+      "min_const": -50.0,
+      "max_const": 110.0,
+      "observed_const": 60.0,
+      "normal": [
+        0.0,
+        -1.0
+      ],
+      "tangent": [
+        1.0,
+        0.0
+      ],
+      "edge_indices": [
+        9
+      ]
+    },
+    "e10_vertical_167.000": {
+      "axis": "vertical",
+      "ref_const": 167.0,
+      "min_const": -50.0,
+      "max_const": 230.0,
+      "observed_const": 180.0,
+      "normal": [
+        1.0,
+        -0.0
+      ],
+      "tangent": [
+        0.0,
+        1.0
+      ],
+      "edge_indices": [
+        10
+      ]
+    },
+    "e11_horizontal_-4.333": {
+      "axis": "horizontal",
+      "ref_const": -4.333333333333336,
+      "min_const": -110.0,
+      "max_const": 50.0,
+      "observed_const": 0.0,
+      "normal": [
+        0.0,
+        1.0
+      ],
+      "tangent": [
+        -1.0,
+        0.0
+      ],
+      "edge_indices": [
+        11
+      ]
+    }
+  },
+  "records": [
+    {
+      "step": 0,
+      "strategy": "axis_anchor_order",
+      "group_key": "e00_oblique_-12.111",
+      "target_edge": 4,
+      "action": [
+        1.0,
+        0.0
+      ],
+      "move_start": [
+        -50.0,
+        -110.0
+      ],
+      "start": [
+        -50.0,
+        -110.0
+      ],
+      "probe_start": [
+        -13.555555555555557,
+        -38.55555555555556
+      ],
+      "contact_ref": [
+        0.5925925925925952,
+        -38.55555555555556
+      ],
+      "trajectory_points": [
+        [
+          -50.0,
+          -110.0
+        ],
+        [
+          -13.555555555555557,
+          -110.0
+        ],
+        [
+          -13.555555555555557,
+          -38.55555555555556
+        ],
+        [
+          0.5925925925925952,
+          -38.55555555555556
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 14.148148148148152,
+      "transit_steps": 72,
+      "approach_steps": 10,
+      "total_steps": 82,
+      "true_edges": [
+        0
+      ],
+      "candidate_edges": [
+        0,
+        4,
+        8
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 7.65352042624123,
+      "figure": "step_00_e00_oblique_-12.111.png"
+    },
+    {
+      "step": 1,
+      "strategy": "axis_anchor_order",
+      "group_key": "e04_vertical_-81.444",
+      "target_edge": 8,
+      "action": [
+        1.0,
+        0.0
+      ],
+      "move_start": [
+        0.5925925925925952,
+        -38.55555555555556
+      ],
+      "start": [
+        0.5925925925925952,
+        -38.55555555555556
+      ],
+      "probe_start": [
+        54.888888888888886,
+        -38.55555555555556
+      ],
+      "contact_ref": [
+        75.0,
+        -38.55555555555556
+      ],
+      "trajectory_points": [
+        [
+          0.5925925925925952,
+          -38.55555555555556
+        ],
+        [
+          0.5925925925925952,
+          -105.0
+        ],
+        [
+          54.888888888888886,
+          -105.0
+        ],
+        [
+          54.888888888888886,
+          -38.55555555555556
+        ],
+        [
+          75.0,
+          -38.55555555555556
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 20.111111111111114,
+      "transit_steps": 125,
+      "approach_steps": 14,
+      "total_steps": 221,
+      "true_edges": [
+        4
+      ],
+      "candidate_edges": [
+        4,
+        8
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 7.584127964268646,
+      "figure": "step_01_e04_vertical_-81.444.png"
+    },
+    {
+      "step": 2,
+      "strategy": "axis_anchor_order",
+      "group_key": "e04_vertical_-81.444",
+      "target_edge": 0,
+      "action": [
+        -1.0,
+        0.0
+      ],
+      "move_start": [
+        75.0,
+        -38.55555555555556
+      ],
+      "start": [
+        75.0,
+        -38.55555555555556
+      ],
+      "probe_start": [
+        75.0,
+        -38.55555555555556
+      ],
+      "contact_ref": [
+        25.0,
+        -38.55555555555556
+      ],
+      "trajectory_points": [
+        [
+          75.0,
+          -38.55555555555556
+        ],
+        [
+          25.0,
+          -38.55555555555556
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 50.0,
+      "transit_steps": 0,
+      "approach_steps": 34,
+      "total_steps": 255,
+      "true_edges": [
+        2
+      ],
+      "candidate_edges": [
+        2,
+        6,
+        10
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 6.297748964912331,
+      "figure": "step_02_e04_vertical_-81.444.png"
+    },
+    {
+      "step": 3,
+      "strategy": "axis_anchor_order",
+      "group_key": "e06_vertical_98.556",
+      "target_edge": 2,
+      "action": [
+        -1.0,
+        0.0
+      ],
+      "move_start": [
+        25.0,
+        -38.55555555555556
+      ],
+      "start": [
+        25.0,
+        -38.55555555555556
+      ],
+      "probe_start": [
+        115.0,
+        -38.55555555555556
+      ],
+      "contact_ref": [
+        105.0,
+        -38.55555555555556
+      ],
+      "trajectory_points": [
+        [
+          25.0,
+          -38.55555555555556
+        ],
+        [
+          25.0,
+          -105.0
+        ],
+        [
+          115.0,
+          -105.0
+        ],
+        [
+          115.0,
+          -38.55555555555556
+        ],
+        [
+          105.0,
+          -38.55555555555556
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 10.0,
+      "transit_steps": 149,
+      "approach_steps": 7,
+      "total_steps": 411,
+      "true_edges": [
+        6
+      ],
+      "candidate_edges": [
+        6,
+        10
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 6.228356502939746,
+      "figure": "step_03_e06_vertical_98.556.png"
+    },
+    {
+      "step": 4,
+      "strategy": "axis_anchor_order",
+      "group_key": "e08_vertical_-149.889",
+      "target_edge": 6,
+      "action": [
+        1.0,
+        0.0
+      ],
+      "move_start": [
+        105.0,
+        -38.55555555555556
+      ],
+      "start": [
+        105.0,
+        -38.55555555555556
+      ],
+      "probe_start": [
+        105.0,
+        -38.55555555555556
+      ],
+      "contact_ref": [
+        155.0,
+        -38.55555555555556
+      ],
+      "trajectory_points": [
+        [
+          105.0,
+          -38.55555555555556
+        ],
+        [
+          155.0,
+          -38.55555555555556
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 50.0,
+      "transit_steps": 0,
+      "approach_steps": 34,
+      "total_steps": 445,
+      "true_edges": [
+        8
+      ],
+      "candidate_edges": [
+        8
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 13.703203194062977,
+      "mean_vertex_error": 4.9419775035834315,
+      "figure": "step_04_e08_vertical_-149.889.png"
+    },
+    {
+      "step": 5,
+      "strategy": "axis_anchor_order",
+      "group_key": "e10_vertical_167.000",
+      "target_edge": 6,
+      "action": [
+        -1.0,
+        0.0
+      ],
+      "move_start": [
+        155.0,
+        -38.55555555555556
+      ],
+      "start": [
+        155.0,
+        -38.55555555555556
+      ],
+      "probe_start": [
+        195.0,
+        -38.55555555555556
+      ],
+      "contact_ref": [
+        185.0,
+        -38.55555555555556
+      ],
+      "trajectory_points": [
+        [
+          155.0,
+          -38.55555555555556
+        ],
+        [
+          155.0,
+          -105.0
+        ],
+        [
+          195.0,
+          -105.0
+        ],
+        [
+          195.0,
+          -38.55555555555556
+        ],
+        [
+          185.0,
+          -38.55555555555556
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 10.0,
+      "transit_steps": 116,
+      "approach_steps": 7,
+      "total_steps": 568,
+      "true_edges": [
+        10
+      ],
+      "candidate_edges": [
+        10
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 4.393106271882051,
+      "mean_vertex_error": 3.3803325267951574,
+      "figure": "step_05_e10_vertical_167.000.png"
+    },
+    {
+      "step": 6,
+      "strategy": "axis_anchor_order",
+      "group_key": "e11_horizontal_-4.333",
+      "target_edge": 2,
+      "action": [
+        0.0,
+        -1.0
+      ],
+      "move_start": [
+        185.0,
+        -38.55555555555556
+      ],
+      "start": [
+        185.0,
+        -38.55555555555556
+      ],
+      "probe_start": [
+        115.0,
+        45.0
+      ],
+      "contact_ref": [
+        115.0,
+        5.0
+      ],
+      "trajectory_points": [
+        [
+          185.0,
+          -38.55555555555556
+        ],
+        [
+          185.0,
+          45.0
+        ],
+        [
+          115.0,
+          45.0
+        ],
+        [
+          115.0,
+          5.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 40.0,
+      "transit_steps": 103,
+      "approach_steps": 27,
+      "total_steps": 698,
+      "true_edges": [
+        11
+      ],
+      "candidate_edges": [
+        11
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 4.39310627188205,
+      "mean_vertex_error": 2.6531292263605417,
+      "figure": "step_06_e11_horizontal_-4.333.png"
+    },
+    {
+      "step": 7,
+      "strategy": "axis_anchor_order",
+      "group_key": "e11_horizontal_-4.333",
+      "target_edge": 7,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        115.0,
+        5.0
+      ],
+      "start": [
+        115.0,
+        5.0
+      ],
+      "probe_start": [
+        124.22222222222223,
+        -105.0
+      ],
+      "contact_ref": [
+        124.22222222222223,
+        -25.0
+      ],
+      "trajectory_points": [
+        [
+          115.0,
+          5.0
+        ],
+        [
+          225.0,
+          5.0
+        ],
+        [
+          225.0,
+          -105.0
+        ],
+        [
+          124.22222222222223,
+          -105.0
+        ],
+        [
+          124.22222222222223,
+          -25.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 80.0,
+      "transit_steps": 214,
+      "approach_steps": 54,
+      "total_steps": 966,
+      "true_edges": [
+        7
+      ],
+      "candidate_edges": [
+        7
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 4.39310627188205,
+      "mean_vertex_error": 2.4123884856198012,
+      "figure": "step_07_e11_horizontal_-4.333.png"
+    },
+    {
+      "step": 8,
+      "strategy": "axis_anchor_order",
+      "group_key": "e11_horizontal_-4.333",
+      "target_edge": 9,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        124.22222222222223,
+        -25.0
+      ],
+      "start": [
+        124.22222222222223,
+        -25.0
+      ],
+      "probe_start": [
+        158.44444444444446,
+        -105.0
+      ],
+      "contact_ref": [
+        158.44444444444446,
+        -65.0
+      ],
+      "trajectory_points": [
+        [
+          124.22222222222223,
+          -25.0
+        ],
+        [
+          124.22222222222223,
+          -105.0
+        ],
+        [
+          158.44444444444446,
+          -105.0
+        ],
+        [
+          158.44444444444446,
+          -65.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 40.0,
+      "transit_steps": 77,
+      "approach_steps": 27,
+      "total_steps": 1070,
+      "true_edges": [
+        9
+      ],
+      "candidate_edges": [
+        9
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 4.39310627188205,
+      "mean_vertex_error": 1.6901662633975787,
+      "figure": "step_08_e11_horizontal_-4.333.png"
+    },
+    {
+      "step": 9,
+      "strategy": "axis_anchor_order",
+      "group_key": "e11_horizontal_-4.333",
+      "target_edge": 3,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        158.44444444444446,
+        -65.0
+      ],
+      "start": [
+        158.44444444444446,
+        -65.0
+      ],
+      "probe_start": [
+        55.77777777777778,
+        -105.0
+      ],
+      "contact_ref": [
+        55.77777777777778,
+        -25.0
+      ],
+      "trajectory_points": [
+        [
+          158.44444444444446,
+          -65.0
+        ],
+        [
+          158.44444444444446,
+          -105.0
+        ],
+        [
+          55.77777777777778,
+          -105.0
+        ],
+        [
+          55.77777777777778,
+          -25.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 80.0,
+      "transit_steps": 96,
+      "approach_steps": 54,
+      "total_steps": 1220,
+      "true_edges": [
+        3
+      ],
+      "candidate_edges": [
+        3
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 4.39310627188205,
+      "mean_vertex_error": 1.4494255226568382,
+      "figure": "step_09_e11_horizontal_-4.333.png"
+    },
+    {
+      "step": 10,
+      "strategy": "axis_anchor_order",
+      "group_key": "e11_horizontal_-4.333",
+      "target_edge": 1,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        55.77777777777778,
+        -25.0
+      ],
+      "start": [
+        55.77777777777778,
+        -25.0
+      ],
+      "probe_start": [
+        25.0,
+        -105.0
+      ],
+      "contact_ref": [
+        25.0,
+        -65.0
+      ],
+      "trajectory_points": [
+        [
+          55.77777777777778,
+          -25.0
+        ],
+        [
+          25.0,
+          -25.0
+        ],
+        [
+          25.0,
+          -105.0
+        ],
+        [
+          25.0,
+          -65.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 40.0,
+      "transit_steps": 74,
+      "approach_steps": 27,
+      "total_steps": 1321,
+      "true_edges": [
+        1
+      ],
+      "candidate_edges": [
+        1
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 4.333333333333336,
+      "mean_vertex_error": 0.7222222222222231,
+      "figure": "step_10_e11_horizontal_-4.333.png"
+    },
+    {
+      "step": 11,
+      "strategy": "axis_anchor_order",
+      "group_key": "e11_horizontal_-4.333",
+      "target_edge": 5,
+      "action": [
+        0.0,
+        1.0
+      ],
+      "move_start": [
+        25.0,
+        -65.0
+      ],
+      "start": [
+        25.0,
+        -65.0
+      ],
+      "probe_start": [
+        90.0,
+        -105.0
+      ],
+      "contact_ref": [
+        90.0,
+        -65.0
+      ],
+      "trajectory_points": [
+        [
+          25.0,
+          -65.0
+        ],
+        [
+          25.0,
+          -105.0
+        ],
+        [
+          90.0,
+          -105.0
+        ],
+        [
+          90.0,
+          -65.0
+        ]
+      ],
+      "continuity_gap": 0.0,
+      "distance": 40.0,
+      "transit_steps": 70,
+      "approach_steps": 27,
+      "total_steps": 1418,
+      "true_edges": [
+        5
+      ],
+      "candidate_edges": [
+        5
+      ],
+      "hypothesis_count": 1,
+      "contact_pair_converged": true,
+      "overlap_area": 0.0,
+      "max_path_overlap_area": 0.0,
+      "max_vertex_error": 3.552713678800501e-15,
+      "mean_vertex_error": 4.461310957770253e-16,
+      "figure": "step_11_e11_horizontal_-4.333.png"
+    }
+  ]
+}
