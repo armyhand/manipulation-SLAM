@@ -842,7 +842,7 @@ class MinimumJerkPosePlanner(Node):
 
     def _get_rotation_line_or_default(self) -> tuple[np.ndarray, np.ndarray]:
         with self.contact_line_lock:
-            if self.contact_line_result is not None:
+            if self.contact_line_rebuild_result is not None:
                 return (
                     np.array(self.contact_line_rebuild_result.representative_point, dtype=np.float64,
                              copy=True) / 1000.0,
@@ -1168,26 +1168,29 @@ class MinimumJerkPosePlanner(Node):
             ##检测contact是否开始，然后进行估计
             baseline_frames = 30
             top_n = 50
-            slip_sigma = 2.0
-            threshold_sigma = 8.0
+            fordis_left_mean, fordis_right_mean = 0.0, 0.0
             if len(self.Force_dis_left) < baseline_frames:
                 print('continue collect frames')
                 self.R_x.append(0.0)
                 self.R_y.append(0.0)
                 self.R_z.append(0.0)
-            else:
-                """由实时缓存计算夹爪坐标系合力和合力矩。"""
-                forces = np.column_stack([f_x, f_y, f_z]).astype(float, copy=False)
-                position_left = np.asarray(self.Position_left, dtype=float)
-                position_right = np.asarray(self.Position_right, dtype=float)
-                displacement_left = np.asarray(self.Displacement_left, dtype=float)
-                displacement_right = np.asarray(self.Displacement_right, dtype=float)
+            elif len(self.Force_dis_left) == baseline_frames:
                 fordis_left = np.asarray(self.Force_dis_left, dtype=float)
                 fordis_right = np.asarray(self.Force_dis_right, dtype=float)
+                fordis_left_mean = np.mean(fordis_left, axis=0)
+                fordis_right_mean = np.mean(fordis_right, axis=0)
+            else:
+                """由实时缓存计算夹爪坐标系合力和合力矩。"""
+                position_left = np.asarray(self.Position_left, dtype=float)[-baseline_frames:]
+                position_right = np.asarray(self.Position_right, dtype=float)[-baseline_frames:]
+                displacement_left = np.asarray(self.Displacement_left, dtype=float)[-baseline_frames:]
+                displacement_right = np.asarray(self.Displacement_right, dtype=float)[-baseline_frames:]
+                fordis_left = np.asarray(self.Force_dis_left, dtype=float)[-baseline_frames:]
+                fordis_right = np.asarray(self.Force_dis_right, dtype=float)[-baseline_frames:]
         
                 # Tac3D 的分布力也需要使用接触前样本消除零偏。
-                fordis_left = fordis_left - np.mean(fordis_left[:baseline_frames], axis=0)
-                fordis_right = fordis_right - np.mean(fordis_right[:baseline_frames], axis=0)
+                fordis_left = fordis_left - fordis_left_mean
+                fordis_right = fordis_right - fordis_right_mean
         
                 # 计算传感器坐标系下的力矩。
                 torque_left_sensor = np.cross(position_left, fordis_left)  # (T, 400, 3)
@@ -1241,7 +1244,7 @@ class MinimumJerkPosePlanner(Node):
 
                 ##计算合力矢量
                 f_vec = np.array([f_x, f_y, f_z])
-                r_vec = moment
+                r_vec = moment[-1]
                 self.R_x.append(r_vec[0])
                 self.R_y.append(r_vec[1])
                 self.R_z.append(r_vec[2])
@@ -1251,8 +1254,6 @@ class MinimumJerkPosePlanner(Node):
                     self.cmd.position.y += delta_y / self.freq
                     self.cmd.position.z += delta_z / self.freq
 
-                    ##合力在运动方向上的分量
-                    f_projec = (f_vec @ self.v_vec) / (self.v_vec @ self.v_vec) * self.v_vec
                     if self.count < self.window_size:  ##计算最近若干个值的均值
                         self.sum += r_vec
                         self.buffer[self.pos] = r_vec
@@ -1305,12 +1306,11 @@ class MinimumJerkPosePlanner(Node):
                             else:
                                 self.v_vec = last_pose - current_pose
 
-                            ##合力在运动方向上的分量
-                            f_projec = (f_vec @ self.v_vec) / (self.v_vec @ self.v_vec) * self.v_vec
+                            if np.linalg.norm(r_vec) > 5 and self.contact_active is False:
+                                self.contact_active = True
+                                self.contact_start_frame = len(self.Pose) - 1
+                                self.get_logger().info(f'start contact at {self.contact_start_frame} frame')
                             if (
-                                    # self.slip_threshold is not None
-                                    # and self.slip_score[-1] > self.slip_threshold
-                                    # and (f_vec @ self.v_vec) < 0
                                 np.linalg.norm(r_vec) > 45
                             ):
                                 self.force_control_flag = True  ##接触力超出阈值，进入接触力调整的阶段（调整为与滑动阈值的比例）
@@ -1351,11 +1351,6 @@ class MinimumJerkPosePlanner(Node):
                             self.n_now = 0
                             self.X, self.Y, self.Z, self.Q = None, None, None, None
                             self.force_inside_flag = False
-                            if self.N == 0: ## 估计接触阈值
-                                baseline = total_load[:baseline_frames]
-                                center, scale = robust_center_scale(baseline)
-                                self.contact_threshold = center + threshold_sigma * scale
-                                self.get_logger().info(f"The contact_threshold is: {self.contact_threshold}")
                             self.N += 1
 
                     else:
