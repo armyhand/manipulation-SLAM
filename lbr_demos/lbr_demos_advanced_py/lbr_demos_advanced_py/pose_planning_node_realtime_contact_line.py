@@ -58,6 +58,7 @@ except Exception as exc:
 5. 以上完成后，需递归估计力和力矩信息，并加入到因子图中。(已完成，但是误差太大，需要调整因子权重)
 6. 还需进一步加入摩擦因子，并思考如何区分线接触、点接触和面接触。最终的目标是实现接触后继续稳态偏转，然后根据估计的结果修正旋转中心和旋转轴，继续偏转，最终实现稳定接触和鲁棒估计。
 7. 需引入旋转的力矩补偿，避免绕不同轴旋转时力矩差距过大。
+260901问题：因子图估计时间随帧数增加而延长，导致轨迹执行变慢。
 """
 
 
@@ -122,6 +123,7 @@ class MinimumJerkPosePlanner(Node):
         self.F_x, self.F_y, self.F_z, self.R_x, self.R_y, self.R_z = [], [], [], [], [], []
         self.Pose, self.Time, self.Quat = [], [], []
         self.Pose_tool_all = np.zeros(0)
+        self.fordis_left_mean, self.fordis_right_mean = 0.0, 0.0
 
         self.force_inside_flag = False
         self.force_control_flag = False
@@ -299,127 +301,34 @@ class MinimumJerkPosePlanner(Node):
     def wrenches_from_realtime(
             self,
             frames: np.ndarray,
-            baseline_frames: int = 10,
-            top_n: int = 50,
-            position_left: list | np.ndarray | None = None,
-            position_right: list | np.ndarray | None = None,
-            displacement_left: list | np.ndarray | None = None,
-            displacement_right: list | np.ndarray | None = None,
-            fordis_left: list | np.ndarray | None = None,
-            fordis_right: list | np.ndarray | None = None,
             F_x: list | np.ndarray | None = None,
             F_y: list | np.ndarray | None = None,
             F_z: list | np.ndarray | None = None,
+            R_x: list | np.ndarray | None = None,
+            R_y: list | np.ndarray | None = None,
+            R_z: list | np.ndarray | None = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """由实时缓存计算夹爪坐标系合力和合力矩。"""
-        if position_left is None:
-            position_left = self.Position_left
-        if position_right is None:
-            position_right = self.Position_right
-        if displacement_left is None:
-            displacement_left = self.Displacement_left
-        if displacement_right is None:
-            displacement_right = self.Displacement_right
-        if fordis_left is None:
-            fordis_left = self.Force_dis_left
-        if fordis_right is None:
-            fordis_right = self.Force_dis_right
         if F_x is None:
             F_x = self.F_x
         if F_y is None:
             F_y = self.F_y
         if F_z is None:
             F_z = self.F_z
+        if R_x is None:
+            R_x = self.R_x
+        if R_y is None:
+            R_y = self.R_y
+        if R_z is None:
+            R_z = self.R_z
 
         frames = np.asarray(frames, dtype=int).reshape(-1)
         forces = np.column_stack([F_x, F_y, F_z]).astype(float, copy=False)
+        moments = np.column_stack([R_x, R_y, R_z]).astype(float, copy=False)
         if len(forces) == 0:
             raise ValueError("No realtime wrench samples are available.")
         if np.any(frames < 0) or np.any(frames >= len(forces)):
             raise IndexError("Wrench frame index is outside the realtime buffer.")
-        baseline_count = min(max(int(baseline_frames), 1), len(forces))
-        forces = forces - np.mean(forces[:baseline_count], axis=0)
-
-        position_left = np.asarray(position_left, dtype=float)
-        position_right = np.asarray(position_right, dtype=float)
-        displacement_left = np.asarray(displacement_left, dtype=float)
-        displacement_right = np.asarray(displacement_right, dtype=float)
-        fordis_left = np.asarray(fordis_left, dtype=float)
-        fordis_right = np.asarray(fordis_right, dtype=float)
-        tactile_histories = {
-            "position_left": position_left,
-            "position_right": position_right,
-            "displacement_left": displacement_left,
-            "displacement_right": displacement_right,
-            "force_distribution_left": fordis_left,
-            "force_distribution_right": fordis_right,
-        }
-        for name, values in tactile_histories.items():
-            if values.ndim != 3 or values.shape[2] != 3:
-                raise ValueError(f"{name} must have shape (frame_count, marker_count, 3).")
-            if len(values) != len(forces):
-                raise ValueError(
-                    f"{name} has {len(values)} frames, expected {len(forces)}."
-                )
-        marker_counts = {values.shape[1] for values in tactile_histories.values()}
-        if len(marker_counts) != 1:
-            raise ValueError("Realtime tactile buffers use inconsistent marker counts.")
-        if top_n <= 0 or top_n > marker_counts.pop():
-            raise ValueError("top_n must be within the available tactile marker count.")
-
-        # Tac3D 的分布力也需要使用接触前样本消除零偏。
-        fordis_left = fordis_left - np.mean(fordis_left[:baseline_count], axis=0)
-        fordis_right = fordis_right - np.mean(fordis_right[:baseline_count], axis=0)
-
-        # 计算传感器坐标系下的力矩。
-        torque_left_sensor = np.cross(position_left, fordis_left)  # (T, 400, 3)
-        torque_right_sensor = np.cross(position_right, fordis_right)  # (T, 400, 3)
-        # 转化到世界坐标系
-        torque_left_world = np.array(
-            [
-                (ROTATION_LEFT_GT @ torque_left_sensor[t].T).T
-                for t in range(len(torque_left_sensor))
-            ]
-        )
-        torque_right_world = np.array(
-            [
-                (ROTATION_RIGHT_GT @ torque_right_sensor[t].T).T
-                for t in range(len(torque_right_sensor))
-            ]
-        )
-        rotation_center_world_left, rotation_center_world_right = estimate_rotation_center(
-            position_left,
-            position_right,
-            displacement_left,
-            displacement_right,
-            ROTATION_LEFT_GT,
-            ROTATION_RIGHT_GT,
-            top_n=top_n,
-            min_rotation_deg=0.5,
-            min_motion_mm=0.02,
-            regularization=1e-3, )
-        d_right = -(rotation_center_world_right + np.array([0.0, 4.0, 0.0]))
-        d_left = -(rotation_center_world_left + np.array([0.0, -4.0, 0.0]))
-        ##计算转换到世界坐标系下的力矩
-        fordis_left_W = np.array(
-            [(ROTATION_LEFT_GT @ fordis_left[t].T).T for t in range(len(fordis_left))]
-        )
-        fordis_right_W = np.array(
-            [(ROTATION_RIGHT_GT @ fordis_right[t].T).T for t in range(len(fordis_right))]
-        )
-        torque_left_add_world = np.array(
-            [np.cross(d_left[t], fordis_left_W[t]) for t in range(len(fordis_left_W))]
-        )  # (T, 400, 3)
-        torque_right_add_world = np.array(
-            [np.cross(d_right[t], fordis_right_W[t]) for t in range(len(fordis_right_W))]
-        )  # (T, 400, 3)
-        torque_additional = np.sum(torque_left_add_world, axis=1) + np.sum(
-            torque_right_add_world, axis=1
-        )  # (T, 3)
-        # 计算总力矩
-        total_torque_left = np.sum(torque_left_world, axis=1)  # (T, 3)
-        total_torque_right = np.sum(torque_right_world, axis=1)  # (T, 3)
-        moments = total_torque_left + total_torque_right + torque_additional
 
         return forces[frames], moments[frames]
 
@@ -529,17 +438,12 @@ class MinimumJerkPosePlanner(Node):
         gripper_poses = self.poses_from_realtime(pose_data, quat_data, frames)
         forces, moments = self.wrenches_from_realtime(
             frames,
-            baseline_frames=10,
-            top_n=top_n,
-            position_left=snapshot["Position_left"],
-            position_right=snapshot["Position_right"],
-            displacement_left=snapshot["Displacement_left"],
-            displacement_right=snapshot["Displacement_right"],
-            fordis_left=snapshot["Force_dis_left"],
-            fordis_right=snapshot["Force_dis_right"],
             F_x=snapshot["F_x"],
             F_y=snapshot["F_y"],
             F_z=snapshot["F_z"],
+            R_x=snapshot["R_x"],
+            R_y=snapshot["R_y"],
+            R_z=snapshot["R_z"]
         )
         tactile_transforms = self.tactile_transforms_from_realtime(
             frames,
@@ -566,12 +470,7 @@ class MinimumJerkPosePlanner(Node):
             forces=forces,
             moments=moments,
         )
-        estimate = estimator.run(
-            frames=frames,
-            contact_start_frame=contact_start_frame,
-            report_interval_frames=report_interval_frames,
-            print_progress=print_progress,
-        )
+        estimate = estimator.run_current()
 
         representative_direction = normalize(np.mean(estimate["line_directions"], axis=0))
         if np.dot(representative_direction, estimate["line_directions"][0]) < 0.0:
@@ -610,13 +509,11 @@ class MinimumJerkPosePlanner(Node):
             world_line_direction_drift_deg=world_line_direction_drift_deg,
             initial_point=initial_point,
             initial_direction=initial_direction,
-            incremental_frames=estimate["incremental_frames"],
-            incremental_object_poses=estimate["incremental_object_poses"],
-            incremental_line_points=estimate["incremental_line_points"],
-            incremental_line_directions=estimate["incremental_line_directions"],
-            incremental_wrench_origins_gripper=estimate[
-                "incremental_wrench_origins_gripper"
-            ],
+            incremental_frames=np.zeros(0),
+            incremental_object_poses=np.zeros(0),
+            incremental_line_points=np.zeros(0),
+            incremental_line_directions=np.zeros(0),
+            incremental_wrench_origins_gripper=np.zeros(0),
         )
 
     def _copy_array_list(self, values: list) -> list:
@@ -637,6 +534,9 @@ class MinimumJerkPosePlanner(Node):
             "F_x": np.asarray(self.F_x[:frame_count], dtype=float).copy(),
             "F_y": np.asarray(self.F_y[:frame_count], dtype=float).copy(),
             "F_z": np.asarray(self.F_z[:frame_count], dtype=float).copy(),
+            "R_x": np.asarray(self.R_x[:frame_count], dtype=float).copy(),
+            "R_y": np.asarray(self.R_y[:frame_count], dtype=float).copy(),
+            "R_z": np.asarray(self.R_z[:frame_count], dtype=float).copy(),
         }
 
     def _contact_line_snapshot_ready(self) -> bool:
@@ -1042,7 +942,7 @@ class MinimumJerkPosePlanner(Node):
                            self.initial.orientation.w])
             Quats_recover.append(q0)
             if self.N == 0:
-                Points_recover.append(start.copy() + np.array([0.0, 0.0, 0.02]))
+                Points_recover.append(start.copy() + np.array([0.0, 0.0, 0.01]))
                 Points_recover.append(start.copy() + np.array([0.0, 0.0, 0.0]))
                 Quats_recover.append(np.array([0.0,
                                                math.sin(89.9 * math.pi / 180),
@@ -1070,7 +970,13 @@ class MinimumJerkPosePlanner(Node):
                 self.world_rotation_line_point = (self.world_rotation_line_point + np.array(
                     [self.current.position.x, self.current.position.y, self.current.position.z - 0.5],
                     dtype=np.float64)) / 2.0
-                self.world_rotation_line_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+                ###
+                if abs(self.R_x[-1]) > abs(self.R_y[-1]) and abs(self.R_x[-1]) > abs(self.R_z[-1]):
+                    self.world_rotation_line_direction = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+                if abs(self.R_y[-1]) > abs(self.R_x[-1]) and abs(self.R_y[-1]) > abs(self.R_z[-1]):
+                    self.world_rotation_line_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+                if abs(self.R_z[-1]) > abs(self.R_x[-1]) and abs(self.R_z[-1]) > abs(self.R_y[-1]):
+                    self.world_rotation_line_direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
                 self.get_logger().info(
                     f'The rotation center is {self.world_rotation_line_point}, the direction is {self.world_rotation_line_direction}')
                 rotation_path_points, rotation_path_quats = self.generate_rotation_path_points(
@@ -1168,7 +1074,6 @@ class MinimumJerkPosePlanner(Node):
             ##检测contact是否开始，然后进行估计
             baseline_frames = 30
             top_n = 50
-            fordis_left_mean, fordis_right_mean = 0.0, 0.0
             if len(self.Force_dis_left) < baseline_frames:
                 print('continue collect frames')
                 self.R_x.append(0.0)
@@ -1177,8 +1082,11 @@ class MinimumJerkPosePlanner(Node):
             elif len(self.Force_dis_left) == baseline_frames:
                 fordis_left = np.asarray(self.Force_dis_left, dtype=float)
                 fordis_right = np.asarray(self.Force_dis_right, dtype=float)
-                fordis_left_mean = np.mean(fordis_left, axis=0)
-                fordis_right_mean = np.mean(fordis_right, axis=0)
+                self.fordis_left_mean = np.mean(fordis_left, axis=0)
+                self.fordis_right_mean = np.mean(fordis_right, axis=0)
+                self.R_x.append(0.0)
+                self.R_y.append(0.0)
+                self.R_z.append(0.0)
             else:
                 """由实时缓存计算夹爪坐标系合力和合力矩。"""
                 position_left = np.asarray(self.Position_left, dtype=float)[-baseline_frames:]
@@ -1189,8 +1097,8 @@ class MinimumJerkPosePlanner(Node):
                 fordis_right = np.asarray(self.Force_dis_right, dtype=float)[-baseline_frames:]
         
                 # Tac3D 的分布力也需要使用接触前样本消除零偏。
-                fordis_left = fordis_left - fordis_left_mean
-                fordis_right = fordis_right - fordis_right_mean
+                fordis_left = fordis_left - self.fordis_left_mean
+                fordis_right = fordis_right - self.fordis_right_mean
         
                 # 计算传感器坐标系下的力矩。
                 torque_left_sensor = np.cross(position_left, fordis_left)  # (T, 400, 3)
@@ -1284,7 +1192,6 @@ class MinimumJerkPosePlanner(Node):
                                      Pose=self.Pose, Time=self.Time, Quat=self.Quat, slip_score=self.Slip_score)
                             print(f'save {self.N} Data!')
                             self.N += 1
-                            # self._reset_contact_detection_state()
                 else:
                     ##发布A_star得到的期望目标点，执行轨迹规划的结果
                     if self.X is not None:
