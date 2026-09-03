@@ -36,6 +36,7 @@ setup(
             "pose_planning_9 = lbr_demos_advanced_py.pose_planning_node_9:main",
             "pose_planning_10 = lbr_demos_advanced_py.pose_planning_node_10:main",
             "pose_planning_node_realtime_contact_line = lbr_demos_advanced_py.pose_planning_node_realtime_contact_line:main",
+            "pose_planning_node_realtime_contact_line_v2 = lbr_demos_advanced_py.pose_planning_node_realtime_contact_line_v2:main",
             "pose_planning_contrast = lbr_demos_advanced_py.pose_planning_node_contrast:main",
             "contact_posint_estimate = lbr_demos_advanced_py.contact_pose_estimate:main",
             "pose_planning_mapping = lbr_demos_advanced_py.pose_planning_node_mapping:main",
