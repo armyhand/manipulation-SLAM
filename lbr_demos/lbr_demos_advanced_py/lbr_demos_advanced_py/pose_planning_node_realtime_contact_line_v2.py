@@ -141,7 +141,7 @@ class MinimumJerkPosePlanner(Node):
         self.transforms_GS = np.array([
             [-1, 0, 0, 0],
             [0, 1, 0, 0],
-            [0, 0, -1, 223],
+            [0, 0, -1, 300],
             [0, 0, 0, 1]
         ], dtype=float)
         self.contact_start_frame = None
@@ -470,7 +470,7 @@ class MinimumJerkPosePlanner(Node):
             forces=forces,
             moments=moments,
         )
-        estimate = estimator.run_current()
+        estimate = estimator.run()
 
         representative_direction = normalize(np.mean(estimate["line_directions"], axis=0))
         if np.dot(representative_direction, estimate["line_directions"][0]) < 0.0:
@@ -1432,7 +1432,7 @@ def contact_line_estimation_process(input_queue, result_queue) -> None:
     transforms_GS = np.array([
         [-1, 0, 0, 0],
         [0, 1, 0, 0],
-        [0, 0, -1, 223],
+        [0, 0, -1, 300],
         [0, 0, 0, 1]
     ], dtype=float)
 
