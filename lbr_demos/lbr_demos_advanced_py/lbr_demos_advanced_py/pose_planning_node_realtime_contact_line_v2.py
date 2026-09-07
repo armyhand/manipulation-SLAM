@@ -49,16 +49,10 @@ except Exception as exc:
     ) from exc
 
 """
-绕定轴旋转，旋转的角度不应为定值，而是根据物体是否出现滑移来判定。桌面距离原点竖直距离为14.5mm。
-1. 接触后的稳态接触指标应该用是否出现滑移来判定，或者用指尖处的力矩来判定。旋转过程应该判定是否平稳。力矩需具有自校正功能。
-2. 接触线或接触点的检测需要确保接触不变的情况下进行偏转，如何实现需要仔细考虑。
-260707:
-3. 被动接触的情况下已经可以较为准确的（误差5mm内）估计接触线了，下一步需要主动偏转来进一步提高估计精度，拟先采用固定接触线反馈控制。(基本实现)
-4. 需要自适应地估计滑动因子，以取代固定的阈值。（已完成）
-5. 以上完成后，需递归估计力和力矩信息，并加入到因子图中。(已完成，但是误差太大，需要调整因子权重)
-6. 还需进一步加入摩擦因子，并思考如何区分线接触、点接触和面接触。最终的目标是实现接触后继续稳态偏转，然后根据估计的结果修正旋转中心和旋转轴，继续偏转，最终实现稳定接触和鲁棒估计。
-7. 需引入旋转的力矩补偿，避免绕不同轴旋转时力矩差距过大。
-260901问题：因子图估计时间随帧数增加而延长，导致轨迹执行变慢。
+在平面上进行偏转实验
+260904问题：转动过程如何确保支持力保持在合力范围内是需要调整的，既不过大也不过小。（绕平面旋转已解决，关键在于1）首先在接触后只进行z方向的调整；2）旋转过程中兼顾力矩和力的范围，先优先调整力矩的范围，无法实现的话再调整力的范围；3）接触后就不再跟随z方向的轨迹，只跟随xy方向的轨迹）
+
+根本目的是：通过绕各个方向偏转稳定估计接触点、线、面以及其坐标，为后续
 """
 
 
@@ -80,6 +74,9 @@ class MinimumJerkPosePlanner(Node):
         self.world_rotation_line_direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         self.world_rotation_angle = np.deg2rad(-20.0)
         self.world_rotation_position_step = 0.006
+        # N=3 第二阶段：让旋转轴绕其垂线完整扫掠一周。
+        self.world_rotation_axis_sweep_angle = 2.0 * np.pi
+        self.world_rotation_axis_sweep_step = 0.006
 
         self.pose_pub = self.create_publisher(Pose, '/lbr/command/pose', 1)
         self.pose_sub = self.create_subscription(Pose, '/lbr/state/pose',
@@ -127,6 +124,11 @@ class MinimumJerkPosePlanner(Node):
 
         self.force_inside_flag = False
         self.force_control_flag = False
+        self.force_pid_integral = 0.0
+        self.force_pid_previous_error = 0.0
+        self.force_pid_cycles = 0
+        self.z_delta = 0.0
+        self.force_pid_primary_timeout = 200
         self.move_hori_flag = False
         self.i = 0
         self.N = 0
@@ -897,7 +899,7 @@ class MinimumJerkPosePlanner(Node):
         line_direction = np.asarray(line_direction, dtype=np.float64)
         direction_norm = np.linalg.norm(line_direction)
         if direction_norm < 1e-12:
-            return [start_position.copy()], [start_quat.copy()]
+            return [start_position.copy()], [base_quat.copy()]
 
         line_direction = line_direction / direction_norm
         relative_position = start_position - line_point
@@ -926,6 +928,49 @@ class MinimumJerkPosePlanner(Node):
 
         return path_points, path_quats
 
+    def generate_axis_sweep_path_points(self, start_position, base_quat, line_point,
+                                        line_direction, sweep_angle, position_step,
+                                        fixed_rotation_angle):
+        """Sweep an axis while recomputing a fixed-angle end-effector orientation."""
+        start_position = np.asarray(start_position, dtype=np.float64)
+        base_quat = np.asarray(base_quat, dtype=np.float64)
+        line_point = np.asarray(line_point, dtype=np.float64)
+        line_direction = np.asarray(line_direction, dtype=np.float64)
+        direction_norm = np.linalg.norm(line_direction)
+        if direction_norm < 1e-12:
+            return [start_position.copy()], [start_quat.copy()]
+        line_direction = line_direction / direction_norm
+
+        # Select a stable world-frame perpendicular.  The fallback avoids a near-zero
+        # cross product when the line is parallel to the preferred reference vector.
+        reference = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        if abs(np.dot(line_direction, reference)) > 0.9:
+            reference = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        sweep_direction = np.cross(line_direction, reference)
+        sweep_direction /= np.linalg.norm(sweep_direction)
+
+        relative_position = start_position - line_point
+        radius = np.linalg.norm(relative_position -
+                                np.dot(relative_position, sweep_direction) * sweep_direction)
+        arc_length = radius * abs(sweep_angle)
+        if arc_length < 1e-12 or position_step <= 0.0:
+            num_segments = 1
+        else:
+            num_segments = max(1, int(np.ceil(arc_length / position_step)))
+
+        path_points, path_quats = [], []
+        base_rotation = R.from_quat(base_quat)
+        for step_index in range(1, num_segments + 1):
+            angle = sweep_angle * step_index / num_segments
+            sweep_rotation = R.from_rotvec(sweep_direction * angle)
+            rotated_position = sweep_rotation.apply(start_position - line_point) + line_point
+            current_line_direction = sweep_rotation.apply(line_direction)
+            fixed_angle_rotation = R.from_rotvec(current_line_direction * fixed_rotation_angle)
+            rotated_quat = (fixed_angle_rotation * base_rotation).as_quat()
+            path_points.append(rotated_position)
+            path_quats.append(rotated_quat)
+        return path_points, path_quats
+
     def As_planner(self):
         if self.initial is not None and self.target is not None:
             M = Motion_planning(dx=0.001, dy=0.001, dz=0.001)
@@ -949,48 +994,42 @@ class MinimumJerkPosePlanner(Node):
                                                0.0,
                                                math.cos(89.9 * math.pi / 180)]))
                 Quats_recover.append(np.array([0.0,
-                                               1.0,
+                                               math.sin(90.0 * math.pi / 180),
                                                0.0,
-                                               0.0]))
+                                               math.cos(90.0 * math.pi / 180)]))
 
             if self.N == 1:  ##初次接触，一定要有足够的运动幅度
-                Points_recover.append(start.copy() + np.array([0.05, 0.0, 0.0]))
-                Points_recover.append(start.copy() + np.array([0.1, 0., 0.0]))
+                Points_recover.append(start.copy() + np.array([0.0, 0.0, -0.05]))
+                Points_recover.append(start.copy() + np.array([0.0, 0., -0.1]))
                 Quats_recover.append(np.array([0.0,
-                                               math.sin(89.9 * math.pi / 180),
+                                               math.sin(89.99 * math.pi / 180),
                                                0.0,
-                                               math.cos(89.9 * math.pi / 180)]))
+                                               math.cos(89.99 * math.pi / 180)]))
                 Quats_recover.append(np.array([0.0,
-                                               1.0,
+                                               math.sin(90.0 * math.pi / 180),
                                                0.0,
-                                               0.0]))
+                                               math.cos(90.0 * math.pi / 180)]))
+            # if self.N == 1:
+            #     self.world_rotation_angle = np.deg2rad(9.0)
+            #     self.world_rotation_line_point = np.array(
+            #         [self.current.position.x, self.current.position.y, self.current.position.z - 0.3],
+            #         dtype=np.float64)
+            #     ###
+            #     self.world_rotation_line_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+            #     self.get_logger().info(
+            #         f'The rotation center is {self.world_rotation_line_point}, the direction is {self.world_rotation_line_direction}')
+            #     rotation_path_points, rotation_path_quats = self.generate_rotation_path_points(
+            #         start_position=start,
+            #         start_quat=q0,
+            #         line_point=self.world_rotation_line_point,
+            #         line_direction=self.world_rotation_line_direction,
+            #         total_angle=self.world_rotation_angle,
+            #         position_step=self.world_rotation_position_step,
+            #     )
+            #     Points_recover.extend(rotation_path_points)
+            #     Quats_recover.extend(rotation_path_quats)
             if self.N == 2:
-                self.world_rotation_angle = np.deg2rad(10.0)
-                self.world_rotation_line_point, self.world_rotation_line_direction = self._get_rotation_line_or_default()
-                self.world_rotation_line_point = (self.world_rotation_line_point + np.array(
-                    [self.current.position.x, self.current.position.y, self.current.position.z - 0.5],
-                    dtype=np.float64)) / 2.0
-                ###
-                if abs(self.R_x[-1]) > abs(self.R_y[-1]) and abs(self.R_x[-1]) > abs(self.R_z[-1]):
-                    self.world_rotation_line_direction = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-                if abs(self.R_y[-1]) > abs(self.R_x[-1]) and abs(self.R_y[-1]) > abs(self.R_z[-1]):
-                    self.world_rotation_line_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-                if abs(self.R_z[-1]) > abs(self.R_x[-1]) and abs(self.R_z[-1]) > abs(self.R_y[-1]):
-                    self.world_rotation_line_direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-                self.get_logger().info(
-                    f'The rotation center is {self.world_rotation_line_point}, the direction is {self.world_rotation_line_direction}')
-                rotation_path_points, rotation_path_quats = self.generate_rotation_path_points(
-                    start_position=start,
-                    start_quat=q0,
-                    line_point=self.world_rotation_line_point,
-                    line_direction=self.world_rotation_line_direction,
-                    total_angle=self.world_rotation_angle,
-                    position_step=self.world_rotation_position_step,
-                )
-                Points_recover.extend(rotation_path_points)
-                Quats_recover.extend(rotation_path_quats)
-            if self.N == 3:
-                self.world_rotation_angle = np.deg2rad(-7.5)
+                self.world_rotation_angle = np.deg2rad(-9.0)
                 self.world_rotation_line_point, self.world_rotation_line_direction = self._get_rotation_line_or_default()
                 self.world_rotation_line_point = (self.world_rotation_line_point + np.array(
                     [self.current.position.x, self.current.position.y, self.current.position.z - 0.5],
@@ -1008,7 +1047,24 @@ class MinimumJerkPosePlanner(Node):
                 )
                 Points_recover.extend(rotation_path_points)
                 Quats_recover.extend(rotation_path_quats)
-            if self.N > 3:
+
+                # 第二阶段：固定第一阶段得到的末端旋转角度，令旋转轴绕其
+                # 垂线旋转一周。仅位置随轴运动，避免扫掠过程引入末端自转。
+                sweep_start_position = np.asarray(Points_recover[-1], dtype=np.float64)
+                sweep_path_points, sweep_path_quats = self.generate_axis_sweep_path_points(
+                    start_position=sweep_start_position,
+                    base_quat=q0,
+                    line_point=self.world_rotation_line_point,
+                    line_direction=self.world_rotation_line_direction,
+                    sweep_angle=self.world_rotation_axis_sweep_angle,
+                    position_step=self.world_rotation_axis_sweep_step,
+                    fixed_rotation_angle=self.world_rotation_angle,
+                )
+                Points_recover.extend(sweep_path_points)
+                Quats_recover.extend(sweep_path_quats)
+                self.get_logger().info(
+                    f'Rotating the reference axis around perpendicular {self.world_rotation_axis_sweep_angle:.3f} rad')
+            if self.N > 2:
                 self.get_logger().info('End the trajectory!')
             for j in range(len(Points_recover) - 1):
                 quat_angle = abs(np.arccos(np.clip(np.dot(Quats_recover[j], Quats_recover[j + 1]), -1.0, 1.0)) * 2.0)
@@ -1158,40 +1214,58 @@ class MinimumJerkPosePlanner(Node):
                 self.R_z.append(r_vec[2])
 
                 if self.force_control_flag:  ##接触力调整阶段，保持一个恒定的接触力（目前为z方向恒定，后续扩展到其他方向）
-                    self.cmd.position.x += delta_x / self.freq
-                    self.cmd.position.y += delta_y / self.freq
-                    self.cmd.position.z += delta_z / self.freq
+                    force_norm = np.linalg.norm(f_vec)
+                    moment_norm = np.linalg.norm(r_vec)
+                    primary_reached = 18.0 < moment_norm < 22.0 and 0.7 < force_norm < 2.0
+                    fallback_reached = 0 <moment_norm < 35.0 and 1.6 < force_norm < 2.0
 
-                    if self.count < self.window_size:  ##计算最近若干个值的均值
-                        self.sum += r_vec
-                        self.buffer[self.pos] = r_vec
-                        self.count += 1
-                        self.pos = (self.pos + 1) % self.window_size
-                    else:
-                        self.sum += r_vec - self.buffer[self.pos]
-                        self.buffer[self.pos] = r_vec
-                        self.pos = (self.pos + 1) % self.window_size
-                        r_projec_mean = self.sum / self.count
-
-                        if 8 < np.linalg.norm(r_projec_mean) < 10:  ##分量的大小最近若干个值均在范围内，则认为接触力调整完成。
-                            self.force_control_flag = False
-                            self.get_logger().info('Contact force within threshold!')
-                            self.initial = None  ##此时再接收初始位置
-                            self.buffer = np.zeros((self.window_size, 3), dtype=np.float64)
-                            self.sum = np.zeros(3, dtype=np.float64)
-                            self.count = 0
-                            self.pos = 0  ##这些计算平均力的值也要归零
-
-                            np.savez(f'Force_data_{self.N}.npz', Fordis_left=self.Force_dis_left,
-                                     Fordis_right=self.Force_dis_right,
-                                     Matrix_left=self.Matrix_left, Matrix_right=self.Matrix_right,
-                                     Position_left=self.Position_left,
-                                     Position_right=self.Position_right, Displacement_left=self.Displacement_left,
-                                     Displacement_right=self.Displacement_right,
-                                     F_x=self.F_x, F_y=self.F_y, F_z=self.F_z, R_x=self.R_x, R_y=self.R_y, R_z=self.R_z,
-                                     Pose=self.Pose, Time=self.Time, Quat=self.Quat, slip_score=self.Slip_score)
-                            print(f'save {self.N} Data!')
+                    if primary_reached or fallback_reached:
+                        self.force_control_flag = False
+                        self.force_pid_integral = 0.0
+                        self.force_pid_previous_error = 0.0
+                        self.force_pid_cycles = 0
+                        self.get_logger().info('Contact force within target range!')
+                        if self.N == 1:
+                            ## 向下运动接触后，重置以接收新目标
+                            self.get_logger().info('Trajectory complete.')
+                            self.initial = None
+                            self.total_time = 0.0
+                            self.n_now = 0
+                            self.X, self.Y, self.Z, self.Q = None, None, None, None
+                            self.force_inside_flag = False
+                            self.z_delta = 0.0
                             self.N += 1
+                    else:
+                        self.force_pid_cycles += 1
+                        if self.force_pid_cycles <= self.force_pid_primary_timeout and 0.5 < np.linalg.norm(f_vec) < 2.5:
+                            target_moment, target_force = 20.0, 1.5
+                            error = 0.3 * (moment_norm - target_moment)
+                        else:
+                            target_moment, target_force = 22.5, 1.8
+                            error = force_norm - target_force
+                        
+                        self.force_pid_integral = np.clip(
+                            self.force_pid_integral + error / self.freq, -0.05, 0.05)
+                        derivative = (error - self.force_pid_previous_error) * self.freq
+                        self.force_pid_previous_error = error
+                        correction = 0.003 * error + 0.0001 * derivative
+                        correction = float(np.clip(correction, -0.0035, 0.0035))
+                        self.cmd.position.z += correction / self.freq
+                        ##保存z方向的偏移量，后续轨迹规划的起点为当前点加上这个偏移量
+                        self.z_delta += correction / self.freq
+                        self.get_logger().info(f'Contact force adjustment: error={error:.4f}, correction={correction:.6f}')
+
+                    # if self.count < self.window_size:  ##计算最近若干个值的均值
+                    #     self.sum += r_vec
+                    #     self.buffer[self.pos] = r_vec
+                    #     self.count += 1
+                    #     self.pos = (self.pos + 1) % self.window_size
+                    # else:
+                    #     self.sum += r_vec - self.buffer[self.pos]
+                    #     self.buffer[self.pos] = r_vec
+                    #     self.pos = (self.pos + 1) % self.window_size
+                    #     r_projec_mean = self.sum / self.count
+
                 else:
                     ##发布A_star得到的期望目标点，执行轨迹规划的结果
                     if self.X is not None:
@@ -1199,6 +1273,9 @@ class MinimumJerkPosePlanner(Node):
                             current_pose = np.array(
                                 [self.current.position.x, self.current.position.y, self.current.position.z])
                             last_pose = np.array([self.X[self.n_now], self.Y[self.n_now], self.Z[self.n_now]])
+                            if self.contact_active: ##已经接触的话只比较x和y方向的误差
+                                current_pose = np.array([self.current.position.x, self.current.position.y, 0.0])
+                                last_pose = np.array([self.X[self.n_now], self.Y[self.n_now], 0.0])
                             ## 姿态误差的计算
                             current_quat = np.array([self.current.orientation.x, self.current.orientation.y,
                                                      self.current.orientation.z, self.current.orientation.w])
@@ -1213,48 +1290,41 @@ class MinimumJerkPosePlanner(Node):
                             else:
                                 self.v_vec = last_pose - current_pose
 
-                            if np.linalg.norm(r_vec) > 5 and self.contact_active is False:
-                                self.contact_active = True
-                                self.contact_start_frame = len(self.Pose) - 1
-                                self.get_logger().info(f'start contact at {self.contact_start_frame} frame')
-                            if (
-                                np.linalg.norm(r_vec) > 40
-                            ):
-                                self.force_control_flag = True  ##接触力超出阈值，进入接触力调整的阶段（调整为与滑动阈值的比例）
-                                ## 重置以接收新目标（但先不接收初始位置）
-                                self.get_logger().info('Terminate and change contact force!')
-                                self.get_logger().info(f'Fr_r= {self.Fr_r}, Fr_l= {self.Fr_l}')
-                                self.get_logger().info(f'F_x= {f_x}, F_y= {f_y}, F_z= {f_z}')
-                                self.total_time = 0.0
-                                self.n_now = 0
-                                self.X, self.Y, self.Z, self.Q = None, None, None, None
-                                self.force_inside_flag = False
+                            force_norm = np.linalg.norm(f_vec)
+                            moment_norm = np.linalg.norm(r_vec)
+                            in_target_range = (2.0 < moment_norm < 40.0 and
+                                               0.5 < force_norm < 2.5)
+                            
+                            if in_target_range:
+                                if self.contact_active is False:
+                                    self.contact_active = True
+                                    self.contact_start_frame = len(self.Pose) - 1
+                                    self.get_logger().info(f'start contact at {self.contact_start_frame} frame')
                             else:
-                                ##如果脱离接触，则增强相应方向的力
-                                if np.linalg.norm(r_vec) < 4 and self.contact_active is True:
-                                    self.contact_active = False
-                                    self.get_logger().info('Contact lost.')
-                                    self.get_logger().info(f'Fr_r= {self.Fr_r}, Fr_l= {self.Fr_l}')
-                                    self.get_logger().info(f'F_x= {f_x}, F_y= {f_y}, F_z= {f_z}')
-                                if self.N != 0:
-                                    delta_x = 0.005 * (f_x - np.sign(f_x) * 0.2) if abs(
-                                        f_x) < 0.2 else 0.0
-                                    delta_y = 0.005 * (f_y - np.sign(f_y) * 0.2) if abs(
-                                        f_y) < 0.2 else 0.0
-                                if self.n_now < self.X.shape[0]:  ##轨迹还未执行完，继续执行轨迹
-                                    self.cmd.position.x = self.X[self.n_now] + delta_x / self.freq
-                                    self.cmd.position.y = self.Y[self.n_now] + delta_y / self.freq
-                                    self.cmd.position.z = self.Z[self.n_now] + delta_z / self.freq
-                                    # orientation 可插值或保持初始
-                                    self.cmd.orientation.x = self.Q[self.n_now][0]
-                                    self.cmd.orientation.y = self.Q[self.n_now][1]
-                                    self.cmd.orientation.z = self.Q[self.n_now][2]
-                                    self.cmd.orientation.w = self.Q[self.n_now][3]
+                                if self.contact_active or force_norm > 3.0 or moment_norm > 50.0:
+                                    self.force_control_flag = True  ##接触力超出阈值，进入接触力调整的阶段
+                                    self.force_pid_integral = 0.0
+                                    self.force_pid_previous_error = 0.0
+                                    self.force_pid_cycles = 0
+                                    self.z_delta = 0.0
+                                    self.get_logger().info('Enter contact force adjustment.')
+                                    self.get_logger().info(f'r_vec= {r_vec}, f_vec= {f_vec}')
+            
+                            if self.n_now < self.X.shape[0]:  ##轨迹还未执行完，继续执行轨迹
+                                self.cmd.position.x = self.X[self.n_now] + delta_x / self.freq
+                                self.cmd.position.y = self.Y[self.n_now] + delta_y / self.freq
+                                self.cmd.position.z = self.cmd.position.z + delta_z / self.freq if self.contact_active else self.Z[self.n_now] + delta_z / self.freq ##如果已经接触了，就不再使用轨迹规划的z值，而是使用当前的z值加上偏移量
+                                # orientation 可插值或保持初始
+                                self.cmd.orientation.x = self.Q[self.n_now][0]
+                                self.cmd.orientation.y = self.Q[self.n_now][1]
+                                self.cmd.orientation.z = self.Q[self.n_now][2]
+                                self.cmd.orientation.w = self.Q[self.n_now][3]
 
-                                else:
-                                    self.cmd.position.x += delta_x / self.freq
-                                    self.cmd.position.y += delta_y / self.freq
-                                    self.cmd.position.z += delta_z / self.freq
+                            else:
+                                self.cmd.position.x += delta_x / self.freq
+                                self.cmd.position.y += delta_y / self.freq
+                                self.cmd.position.z += delta_z / self.freq
+
                         else:
                             ## 重置以接收新目标
                             self.get_logger().info('Trajectory complete.')
@@ -1263,6 +1333,7 @@ class MinimumJerkPosePlanner(Node):
                             self.n_now = 0
                             self.X, self.Y, self.Z, self.Q = None, None, None, None
                             self.force_inside_flag = False
+                            self.z_delta = 0.0
                             self.N += 1
 
                     else:
@@ -1281,11 +1352,11 @@ class MinimumJerkPosePlanner(Node):
                     if self.X is not None:
                         self.get_logger().info(
                             f'delta_x= {delta_x}, delta_y= {delta_y}, delta_z= {delta_z}, '
-                            f'v_vec= {self.v_vec}, r_vec= {r_vec}, f_vec= {f_vec}, n_now= {self.n_now}/{self.X.shape[0]}')
+                            f'v_vec= {self.v_vec}, r_vec= {np.linalg.norm(r_vec):.2f}/{r_vec}, f_vec= {np.linalg.norm(f_vec):.2f}/{f_vec}, n_now= {self.n_now}/{self.X.shape[0]}')
                     if self.force_control_flag:
                         self.get_logger().info(
                             f'delta_x= {delta_x}, delta_y= {delta_y}, delta_z= {delta_z}, '
-                            f'v_vec= {self.v_vec}, r_vec= {r_vec}, f_vec= {f_vec}')
+                            f'v_vec= {self.v_vec}, r_vec= {np.linalg.norm(r_vec):.2f}/{r_vec}, f_vec= {np.linalg.norm(f_vec):.2f}/{f_vec}')
                     with self.contact_line_lock:
                         contact_line_rebuild_result = self.contact_line_rebuild_result
                     if contact_line_rebuild_result is not None:

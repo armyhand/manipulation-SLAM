@@ -58,7 +58,8 @@ except Exception as exc:
 5. 以上完成后，需递归估计力和力矩信息，并加入到因子图中。(已完成，但是误差太大，需要调整因子权重)
 6. 还需进一步加入摩擦因子，并思考如何区分线接触、点接触和面接触。最终的目标是实现接触后继续稳态偏转，然后根据估计的结果修正旋转中心和旋转轴，继续偏转，最终实现稳定接触和鲁棒估计。
 7. 需引入旋转的力矩补偿，避免绕不同轴旋转时力矩差距过大。
-260901问题：因子图估计时间随帧数增加而延长，导致轨迹执行变慢。
+260901问题：因子图估计时间随帧数增加而延长，导致轨迹执行变慢（以解决）。
+260903问题：因子图估计与数据离线估计结果不一样。
 """
 
 
@@ -141,7 +142,7 @@ class MinimumJerkPosePlanner(Node):
         self.transforms_GS = np.array([
             [-1, 0, 0, 0],
             [0, 1, 0, 0],
-            [0, 0, -1, 223],
+            [0, 0, -1, 300],
             [0, 0, 0, 1]
         ], dtype=float)
         self.contact_start_frame = None
@@ -470,7 +471,7 @@ class MinimumJerkPosePlanner(Node):
             forces=forces,
             moments=moments,
         )
-        estimate = estimator.run_current()
+        estimate = estimator.run()
 
         representative_direction = normalize(np.mean(estimate["line_directions"], axis=0))
         if np.dot(representative_direction, estimate["line_directions"][0]) < 0.0:
@@ -1218,7 +1219,7 @@ class MinimumJerkPosePlanner(Node):
                                 self.contact_start_frame = len(self.Pose) - 1
                                 self.get_logger().info(f'start contact at {self.contact_start_frame} frame')
                             if (
-                                np.linalg.norm(r_vec) > 45
+                                np.linalg.norm(r_vec) > 40
                             ):
                                 self.force_control_flag = True  ##接触力超出阈值，进入接触力调整的阶段（调整为与滑动阈值的比例）
                                 ## 重置以接收新目标（但先不接收初始位置）
@@ -1231,6 +1232,11 @@ class MinimumJerkPosePlanner(Node):
                                 self.force_inside_flag = False
                             else:
                                 ##如果脱离接触，则增强相应方向的力
+                                if np.linalg.norm(r_vec) < 4 and self.contact_active is True:
+                                    self.contact_active = False
+                                    self.get_logger().info('Contact lost.')
+                                    self.get_logger().info(f'Fr_r= {self.Fr_r}, Fr_l= {self.Fr_l}')
+                                    self.get_logger().info(f'F_x= {f_x}, F_y= {f_y}, F_z= {f_z}')
                                 if self.N != 0:
                                     delta_x = 0.005 * (f_x - np.sign(f_x) * 0.2) if abs(
                                         f_x) < 0.2 else 0.0
@@ -1294,9 +1300,693 @@ class MinimumJerkPosePlanner(Node):
                         self.get_logger().info('contact_line= estimating...')
 
 
+import copy
+import math
+import multiprocessing as mp
+import os
+import queue
+import threading
+import time
+from types import SimpleNamespace
+
+import numpy as np
+import rclpy
+from geometry_msgs.msg import Pose
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from scipy.spatial.transform import Rotation as R
+
+ESTIMATION_QUEUE_MAX_SIZE = 500
+ESTIMATION_FRAME_MAX_COUNT = 500
+CONTROL_PERIOD_SECONDS = 0.01
+HISTORY_MAX_FRAMES = 500
+SAVE_QUEUE_MAX_SIZE = 4
+RESULT_QUEUE_MAX_SIZE = 32
+
+
+def _put_latest(target_queue, item) -> bool:
+    try:
+        target_queue.put_nowait(item)
+        return True
+    except queue.Full:
+        try:
+            target_queue.get_nowait()
+        except queue.Empty:
+            return False
+        try:
+            target_queue.put_nowait(item)
+            return True
+        except queue.Full:
+            return False
+
+
+def _pose_from_sample(sample: dict) -> np.ndarray:
+    rotation = R.from_quat(sample["quat"]).as_matrix()
+    return make_pose(rotation, np.asarray(sample["position"], dtype=float) * 1000.0)
+
+
+def _tactile_transform_from_sample(
+        sample: dict,
+        initial_points: np.ndarray,
+        selected_indices: np.ndarray,
+        transforms_GS: np.ndarray,
+) -> np.ndarray:
+    left_current = (
+        ROTATION_LEFT_GT @ np.asarray(sample["position_left"], dtype=float).T
+    ).T + TRANS_LEFT_GT
+    current_points = left_current[selected_indices]
+    rotation, translation = estimate_rigid_transform_kabsch(
+        initial_points, current_points
+    )
+    return transforms_GS @ make_pose(rotation, translation)
+
+
+def _append_factor_graph_frame(
+        estimator: GtsamContactLineISAM2,
+        gripper_pose: np.ndarray,
+        tactile_transform: np.ndarray,
+        force: np.ndarray,
+        moment: np.ndarray,
+) -> int:
+    estimator.gripper_poses = np.concatenate(
+        [estimator.gripper_poses, gripper_pose[None, :, :]], axis=0
+    )
+    estimator.forces = np.concatenate(
+        [estimator.forces, force.reshape(1, 3)], axis=0
+    )
+    estimator.moments = np.concatenate(
+        [estimator.moments, moment.reshape(1, 3)], axis=0
+    )
+    estimator.tactile_measurements = np.concatenate(
+        [estimator.tactile_measurements, se3_log(tactile_transform)[None, :]], axis=0
+    )
+    object_pose = gripper_pose @ tactile_transform
+    estimator.initial_object_poses = np.concatenate(
+        [estimator.initial_object_poses, object_pose[None, :, :]], axis=0
+    )
+    index = len(estimator.gripper_poses) - 1
+    estimator.add_step(index)
+    return index
+
+
+def _current_factor_graph_result(
+        estimator: GtsamContactLineISAM2,
+        index: int,
+        session_id: int,
+        sample_time: float,
+        queued_at: float,
+        compute_seconds: float,
+) -> dict:
+    values = estimator.isam.calculateEstimate()
+    point = estimator.point_array(values.atPoint3(estimator.line_point_key(index)))
+    direction = normalize(
+        estimator.point_array(values.atPoint3(estimator.line_direction_key(index)))
+    )
+    reference = estimator.gripper_poses[index, :3, 3]
+    representative_point = line_point_near_reference(
+        point, direction, reference
+    )
+    return {
+        "type": "estimate",
+        "session_id": session_id,
+        "processed_frames": index + 1,
+        "sample_time": sample_time,
+        "queued_at": queued_at,
+        "compute_seconds": compute_seconds,
+        "representative_point": representative_point,
+        "representative_direction": direction,
+    }
+
+
+def contact_line_estimation_process(input_queue, result_queue) -> None:
+    try:
+        os.nice(5)
+    except OSError:
+        pass
+    rclpy.init(args=None)
+    process_node = rclpy.create_node('contact_line_factor_graph_estimator')
+    estimator = None
+    session_id = None
+    initial_points = None
+    selected_indices = None
+    pending_frames = []
+    transforms_GS = np.array([
+        [-1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, -1, 300],
+        [0, 0, 0, 1]
+    ], dtype=float)
+
+    try:
+        while True:
+            message = input_queue.get()
+            message_type = message.get("type")
+            if message_type == "stop":
+                break
+            if message_type == "reset":
+                estimator = None
+                session_id = int(message["session_id"])
+                initial_points = None
+                selected_indices = None
+                pending_frames = []
+                continue
+            if message_type == "end":
+                if session_id == int(message["session_id"]):
+                    estimator = None
+                    initial_points = None
+                    selected_indices = None
+                    pending_frames = []
+                continue
+            if message_type != "sample":
+                continue
+
+            sample_session_id = int(message["session_id"])
+            if sample_session_id != session_id:
+                estimator = None
+                session_id = sample_session_id
+                initial_points = None
+                selected_indices = None
+                pending_frames = []
+            if estimator is not None and len(estimator.gripper_poses) >= ESTIMATION_FRAME_MAX_COUNT:
+                _put_latest(result_queue, {
+                    "type": "limit",
+                    "session_id": session_id,
+                    "processed_frames": ESTIMATION_FRAME_MAX_COUNT,
+                })
+                continue
+
+            started_at = time.perf_counter()
+            try:
+                gripper_pose = _pose_from_sample(message)
+                if initial_points is None:
+                    selected_indices = select_top_n_indices(
+                        np.asarray(message["selection_displacement_left"], dtype=float),
+                        n=int(message["top_n"]),
+                    )
+                    left_initial = (
+                        ROTATION_LEFT_GT
+                        @ np.asarray(message["position_left"], dtype=float).T
+                    ).T + TRANS_LEFT_GT
+                    initial_points = left_initial[selected_indices]
+
+                tactile_transform = _tactile_transform_from_sample(
+                    message,
+                    initial_points,
+                    selected_indices,
+                    transforms_GS,
+                )
+                force = np.asarray(message["force"], dtype=float).reshape(3)
+                moment = np.asarray(message["moment"], dtype=float).reshape(3)
+
+                if estimator is None:
+                    pending_frames.append(
+                        (gripper_pose, tactile_transform, force, moment)
+                    )
+                    if len(pending_frames) < int(message["min_frames"]):
+                        continue
+                    gripper_poses = np.asarray(
+                        [frame[0] for frame in pending_frames]
+                    )
+                    tactile_transforms = np.asarray(
+                        [frame[1] for frame in pending_frames]
+                    )
+                    forces = np.asarray([frame[2] for frame in pending_frames])
+                    moments = np.asarray([frame[3] for frame in pending_frames])
+                    initial_object_poses = np.asarray([
+                        gripper @ tactile
+                        for gripper, tactile in zip(gripper_poses, tactile_transforms)
+                    ])
+                    initial_point, initial_direction = initial_line_from_object_poses(
+                        initial_object_poses
+                    )
+                    estimator = GtsamContactLineISAM2(
+                        gripper_poses=gripper_poses,
+                        tactile_transforms=tactile_transforms,
+                        initial_point=initial_point,
+                        initial_direction=initial_direction,
+                        forces=forces,
+                        moments=moments,
+                    )
+                    for index in range(len(pending_frames)):
+                        estimator.add_step(index)
+                    pending_frames = []
+                else:
+                    index = _append_factor_graph_frame(
+                        estimator,
+                        gripper_pose,
+                        tactile_transform,
+                        force,
+                        moment,
+                    )
+
+                compute_seconds = time.perf_counter() - started_at
+                result = _current_factor_graph_result(
+                    estimator,
+                    index,
+                    session_id,
+                    float(message["sample_time"]),
+                    float(message["queued_at"]),
+                    compute_seconds,
+                )
+                _put_latest(result_queue, result)
+            except Exception as exc:
+                _put_latest(result_queue, {
+                    "type": "error",
+                    "session_id": session_id,
+                    "message": repr(exc),
+                })
+                process_node.get_logger().error(f'Contact line estimation failed: {exc}')
+    finally:
+        process_node.destroy_node()
+        rclpy.shutdown()
+
+
+class AsyncNpzWriter:
+    def __init__(self) -> None:
+        self._queue = queue.Queue(maxsize=SAVE_QUEUE_MAX_SIZE)
+        self._savez = np.savez
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self.dropped_jobs = 0
+
+    def submit(self, path, **data) -> None:
+        safe_data = {
+            name: list(value) if isinstance(value, list) else np.array(value, copy=True)
+            for name, value in data.items()
+        }
+        job = (str(path), safe_data)
+        try:
+            self._queue.put_nowait(job)
+        except queue.Full:
+            self.dropped_jobs += 1
+
+    def _run(self) -> None:
+        while True:
+            job = self._queue.get()
+            try:
+                if job is None:
+                    return
+                path, data = job
+                self._savez(path, **data)
+            finally:
+                self._queue.task_done()
+
+    def close(self) -> None:
+        self._queue.join()
+        self._queue.put(None)
+        self._thread.join()
+
+
+class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
+    def __init__(self):
+        self.pose_state_lock = threading.Lock()
+        self.latest_pose = None
+        super().__init__()
+
+        self.control_callback_group = MutuallyExclusiveCallbackGroup()
+        self.control_timer = self.create_timer(
+            CONTROL_PERIOD_SECONDS,
+            self.control_timer_callback,
+            callback_group=self.control_callback_group,
+        )
+        self.monitor_timer = self.create_timer(
+            1.0,
+            self.report_realtime_status,
+            callback_group=self.control_callback_group,
+        )
+
+        context = mp.get_context("spawn")
+        self.estimation_queue = context.Queue(maxsize=ESTIMATION_QUEUE_MAX_SIZE)
+        self.estimation_result_queue = context.Queue(maxsize=RESULT_QUEUE_MAX_SIZE)
+        self.estimation_process = context.Process(
+            target=contact_line_estimation_process,
+            args=(self.estimation_queue, self.estimation_result_queue),
+            daemon=True,
+        )
+        self.estimation_process.start()
+
+        self.async_writer = AsyncNpzWriter()
+        self.contact_session_id = 0
+        self.contact_session_sample_count = 0
+        self.estimation_dropped_frames = 0
+        self.estimation_processed_frames = 0
+        self.estimation_compute_seconds = 0.0
+        self.estimation_result_age = math.inf
+        self.estimation_limit_reported = False
+        self.last_control_started_at = None
+        self.control_period_max = 0.0
+        self.control_deadline_misses = 0
+        self.control_samples = 0
+        self.stream_chunk_index = 0
+        self.stream_records = []
+
+    def on_pose(self, msg):
+        with self.pose_state_lock:
+            self.latest_pose = copy.deepcopy(msg)
+
+    def on_Mr_l(self, msg):
+        super().on_Mr_l(msg)
+        if len(self.Matrix_left) > HISTORY_MAX_FRAMES:
+            del self.Matrix_left[:-HISTORY_MAX_FRAMES]
+
+    def on_Mr_r(self, msg):
+        super().on_Mr_r(msg)
+        if len(self.Matrix_right) > HISTORY_MAX_FRAMES:
+            del self.Matrix_right[:-HISTORY_MAX_FRAMES]
+
+    def _start_contact_line_estimation_async(self):
+        return
+
+    def _advance_pose_state(self, msg):
+        if self.initial is None:  ##确定任务规划的起点
+            self.initial = msg
+            self.current = msg
+            self.cmd.position.x = self.initial.position.x
+            self.cmd.position.y = self.initial.position.y
+            self.cmd.position.z = self.initial.position.z
+            self.cmd.orientation = self.initial.orientation
+            self.get_logger().info('Initial pose received.')
+        else:
+            self.current = msg
+            # 如果已有初始与目标 且 未启动轨迹
+            if self.start_time is None:
+                if any(v is None for v in (self.Fr_r, self.Fr_l, self.Mr_r, self.Mr_l)):
+                    if self.i % 100 == 0:
+                        self.get_logger().info('Waiting for tac3d information.')
+                else:
+                    if -10 < self.Fr_r[0, 2] < -8 and -10 < self.Fr_l[0, 2] < -8 and self.force_inside_flag == False:
+                        # self.force_inside_flag = True
+                        self.start_time = self.get_clock().now().to_msg().sec + \
+                                          self.get_clock().now().to_msg().nanosec * 1e-9
+                        self.get_logger().info('Starting minimum jerk trajectory.')
+                    else:
+                        if self.i % 100 == 0:
+                            self.get_logger().info(f'Fr_r= {self.Fr_r}, Fr_l= {self.Fr_l}')
+            # 如果轨迹已经启动
+            if self.start_time is not None:
+                if -15 < self.Fr_r[0, 2] < -5 and -15 < self.Fr_l[0, 2] < -5:
+                    self.force_inside_flag = True
+                else:
+                    self.force_inside_flag = False
+                    if self.i % 100 == 0:
+                        self.get_logger().info('The force is out of range!.')
+                        self.get_logger().info(f'Fr_r= {self.Fr_r}, Fr_l= {self.Fr_l}')
+
+                if self.force_inside_flag:
+                    if self.m < 20:
+                        f_x, f_y, f_z, r_x, r_y, r_z = gripper_force_direct(
+                            self.Fr_l, self.Fr_r, self.Mr_l, self.Mr_r
+                        )
+                        self.F_x_1 = np.append(self.F_x_1, f_x)
+                        self.F_y_1 = np.append(self.F_y_1, f_y)
+                        self.F_z_1 = np.append(self.F_z_1, f_z)
+                        # self.R_x_1 = np.append(self.R_x_1, r_x)
+                        # self.R_y_1 = np.append(self.R_y_1, r_y)
+                        # self.R_z_1 = np.append(self.R_z_1, r_z)
+                        self.m += 1
+                    elif self.m == 20:
+                        self.f_x_mean = np.mean(self.F_x_1)
+                        self.f_y_mean = np.mean(self.F_y_1)
+                        self.f_z_mean = np.mean(self.F_z_1)
+                        # self.r_x_mean = np.mean(self.R_x_1)
+                        # self.r_y_mean = np.mean(self.R_y_1)
+                        # self.r_z_mean = np.mean(self.R_z_1)
+                        self.get_logger().info(
+                            f'The mean initial force is f_x={self.f_x_mean}, f_y={self.f_y_mean}, f_z={self.f_z_mean}'
+                        )
+                        self.m += 1
+                    else:
+                        self._publish_without_blocking_save()
+
+        self.i += 1
+
+    def _publish_without_blocking_save(self):
+        original_savez = np.savez
+        np.savez = self._submit_async_save
+        try:
+            super().publish_at_time()
+        finally:
+            np.savez = original_savez
+
+    def _submit_async_save(self, path, **data):
+        self.async_writer.submit(path, **data)
+
+    def control_timer_callback(self):
+        started_at = time.perf_counter()
+        if self.last_control_started_at is not None:
+            period = started_at - self.last_control_started_at
+            self.control_period_max = max(self.control_period_max, period)
+            if period > CONTROL_PERIOD_SECONDS * 1.5:
+                self.control_deadline_misses += 1
+        self.last_control_started_at = started_at
+        self.control_samples += 1
+
+        with self.pose_state_lock:
+            pose = copy.deepcopy(self.latest_pose)
+        if pose is None:
+            return
+
+        previous_sample_count = len(self.Time)
+        previous_contact_active = self.contact_active
+        previous_force_control = self.force_control_flag
+        previous_stage = self.N
+        self._advance_pose_state(pose)
+
+        if not previous_contact_active and self.contact_active:
+            self._begin_contact_session()
+        if len(self.Time) > previous_sample_count:
+            self._record_latest_sample()
+            self._queue_latest_estimation_sample()
+            self._trim_histories()
+        if self.contact_active is False and previous_contact_active is True:
+            self._end_contact_session()
+        self._poll_estimation_results()
+
+    def _begin_contact_session(self):
+        self.contact_session_id += 1
+        self.contact_session_sample_count = 0
+        self.estimation_processed_frames = 0
+        self.estimation_limit_reported = False
+        with self.contact_line_lock:
+            self.contact_line_rebuild_result = None
+        self._drain_estimation_queue()
+        _put_latest(self.estimation_queue, {
+            "type": "reset",
+            "session_id": self.contact_session_id,
+        })
+
+    def _end_contact_session(self):
+        self._drain_estimation_queue()
+        _put_latest(self.estimation_queue, {
+            "type": "end",
+            "session_id": self.contact_session_id,
+        })
+        self.contact_active = False
+        self.contact_start_frame = None
+        self.contact_session_sample_count = 0
+
+    def _queue_latest_estimation_sample(self):
+        if not self.contact_active or not self.Pose or not self.R_x:
+            return
+        self.contact_session_sample_count += 1
+        if (
+                self.contact_session_sample_count != 1
+                and self.contact_session_sample_count % self.contact_line_frame_step != 0
+        ):
+            return
+        if self.estimation_processed_frames >= ESTIMATION_FRAME_MAX_COUNT:
+            return
+
+        sample = {
+            "type": "sample",
+            "session_id": self.contact_session_id,
+            "sample_time": float(self.Time[-1]),
+            "queued_at": time.monotonic(),
+            "top_n": self.contact_line_top_n,
+            "min_frames": self.contact_line_min_frames,
+            "position": np.array(self.Pose[-1], copy=True),
+            "quat": np.array(self.Quat[-1], copy=True),
+            "position_left": np.array(self.Position_left[-1], copy=True),
+            "position_right": np.array(self.Position_right[-1], copy=True),
+            "displacement_left": np.array(self.Displacement_left[-1], copy=True),
+            "selection_displacement_left": np.array(
+                self.Displacement_left[-11]
+                if self.contact_session_sample_count == 1 and len(self.Displacement_left) >= 11
+                else self.Displacement_left[-1],
+                copy=True,
+            ),
+            "displacement_right": np.array(self.Displacement_right[-1], copy=True),
+            "force": np.array([self.F_x[-1], self.F_y[-1], self.F_z[-1]], dtype=float),
+            "moment": np.array([self.R_x[-1], self.R_y[-1], self.R_z[-1]], dtype=float),
+        }
+        if not _put_latest(self.estimation_queue, sample):
+            self.estimation_dropped_frames += 1
+
+    def _poll_estimation_results(self):
+        while True:
+            try:
+                result = self.estimation_result_queue.get_nowait()
+            except queue.Empty:
+                break
+            if int(result.get("session_id", -1)) != self.contact_session_id:
+                continue
+            if result["type"] == "error":
+                self.get_logger().error(
+                    f'Contact line estimation failed: {result["message"]}'
+                )
+                continue
+            if result["type"] == "limit":
+                if not self.estimation_limit_reported:
+                    self.get_logger().warning(
+                        f'Contact line estimation reached {ESTIMATION_FRAME_MAX_COUNT} frames.'
+                    )
+                    self.estimation_limit_reported = True
+                continue
+
+            self.estimation_processed_frames = int(result["processed_frames"])
+            self.estimation_compute_seconds = float(result["compute_seconds"])
+            self.estimation_result_age = max(
+                0.0, time.monotonic() - float(result["queued_at"])
+            )
+            with self.contact_line_lock:
+                self.contact_line_rebuild_result = SimpleNamespace(
+                    representative_point=np.array(
+                        result["representative_point"], dtype=float, copy=True
+                    ),
+                    representative_direction=np.array(
+                        result["representative_direction"], dtype=float, copy=True
+                    ),
+                )
+
+    def _record_latest_sample(self):
+        self.stream_records.append({
+            "Time": self.Time[-1],
+            "Pose": self.Pose[-1],
+            "Quat": self.Quat[-1],
+            "F_x": self.F_x[-1],
+            "F_y": self.F_y[-1],
+            "F_z": self.F_z[-1],
+            "R_x": self.R_x[-1],
+            "R_y": self.R_y[-1],
+            "R_z": self.R_z[-1],
+            "Fordis_left": self.Force_dis_left[-1],
+            "Fordis_right": self.Force_dis_right[-1],
+            "Position_left": self.Position_left[-1],
+            "Position_right": self.Position_right[-1],
+            "Displacement_left": self.Displacement_left[-1],
+            "Displacement_right": self.Displacement_right[-1],
+            "Matrix_left": self.Mr_l,
+            "Matrix_right": self.Mr_r,
+        })
+        if len(self.stream_records) >= HISTORY_MAX_FRAMES:
+            self._flush_stream_records()
+
+    def _flush_stream_records(self):
+        if not self.stream_records:
+            return
+        records = self.stream_records
+        self.stream_records = []
+        data = {
+            name: [record[name] for record in records]
+            for name in records[0]
+        }
+        path = f'Force_data_stream_{self.stream_chunk_index:06d}.npz'
+        self.stream_chunk_index += 1
+        self.async_writer.submit(path, **data)
+
+    def _trim_histories(self):
+        aligned_histories = (
+            self.Force_left,
+            self.Force_right,
+            self.Force_dis_left,
+            self.Force_dis_right,
+            self.Position_left,
+            self.Position_right,
+            self.Displacement_left,
+            self.Displacement_right,
+            self.F_x,
+            self.F_y,
+            self.F_z,
+            self.R_x,
+            self.R_y,
+            self.R_z,
+            self.Pose,
+            self.Time,
+            self.Quat,
+        )
+        for history in aligned_histories:
+            if len(history) > HISTORY_MAX_FRAMES:
+                del history[:-HISTORY_MAX_FRAMES]
+        if len(self.Slip_score) > HISTORY_MAX_FRAMES:
+            del self.Slip_score[:-HISTORY_MAX_FRAMES]
+
+    def _drain_estimation_queue(self):
+        while True:
+            try:
+                self.estimation_queue.get_nowait()
+                self.estimation_dropped_frames += 1
+            except queue.Empty:
+                return
+
+    def report_realtime_status(self):
+        self._poll_estimation_results()
+        try:
+            queue_size = self.estimation_queue.qsize()
+        except (NotImplementedError, AttributeError):
+            queue_size = -1
+        age_text = (
+            'none' if not math.isfinite(self.estimation_result_age)
+            else f'{self.estimation_result_age * 1000.0:.1f}ms'
+        )
+        self.get_logger().info(
+            f'control_max_period={self.control_period_max * 1000.0:.2f}ms, '
+            f'deadline_misses={self.control_deadline_misses}, '
+            f'estimation_queue={queue_size}/{ESTIMATION_QUEUE_MAX_SIZE}, '
+            f'estimation_dropped={self.estimation_dropped_frames}, '
+            f'estimation_frames={self.estimation_processed_frames}/{ESTIMATION_FRAME_MAX_COUNT}, '
+            f'estimation_step={self.estimation_compute_seconds * 1000.0:.1f}ms, '
+            f'estimation_age={age_text}'
+        )
+        self.control_period_max = 0.0
+        self.control_deadline_misses = 0
+
+    def request_final_save(self):
+        self._flush_stream_records()
+        self.async_writer.submit(
+            'Force_data_decoupled_final.npz',
+            Fordis_left=self.Force_dis_left,
+            Fordis_right=self.Force_dis_right,
+            Matrix_left=self.Matrix_left,
+            Matrix_right=self.Matrix_right,
+            Position_left=self.Position_left,
+            Position_right=self.Position_right,
+            Displacement_left=self.Displacement_left,
+            Displacement_right=self.Displacement_right,
+            F_x=self.F_x,
+            F_y=self.F_y,
+            F_z=self.F_z,
+            R_x=self.R_x,
+            R_y=self.R_y,
+            R_z=self.R_z,
+            Pose=self.Pose,
+            Time=self.Time,
+            Quat=self.Quat,
+            slip_score=self.Slip_score,
+        )
+
+    def shutdown_workers(self):
+        self._flush_stream_records()
+        _put_latest(self.estimation_queue, {"type": "stop"})
+        self.estimation_process.join(timeout=5.0)
+        if self.estimation_process.is_alive():
+            self.estimation_process.terminate()
+            self.estimation_process.join(timeout=1.0)
+        self.async_writer.close()
+
+
 def main(args=None):
     rclpy.init(args=args)
-    node = MinimumJerkPosePlanner()
+    node = DecoupledMinimumJerkPosePlanner()
 
     # 设置拉杆：假定先设置 total_time，可通过 launch 参数或 Node 参数改动
     # node.total_time = 8.0  # 例如 5 秒完成轨迹
@@ -1305,18 +1995,16 @@ def main(args=None):
     node.target.position.y = 0.0
     node.target.position.z = 0.0
 
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
-        np.savez(r'Force_data_2508301147.npz', Fordis_left=node.Force_dis_left, Fordis_right=node.Force_dis_right,
-                 Matrix_left=node.Matrix_left, Matrix_right=node.Matrix_right, Position_left=node.Position_left,
-                 Position_right=node.Position_right, Displacement_left=node.Displacement_left,
-                 Displacement_right=node.Displacement_right,
-                 F_x=node.F_x, F_y=node.F_y, F_z=node.F_z, R_x=node.R_x, R_y=node.R_y, R_z=node.R_z,
-                 Pose=node.Pose, Time=node.Time, Quat=node.Quat, slip_score=node.Slip_score)
-        print('save Data!')
+        node.request_final_save()
+        node.shutdown_workers()
+        executor.remove_node(node)
         node.destroy_node()
         rclpy.shutdown()
 
