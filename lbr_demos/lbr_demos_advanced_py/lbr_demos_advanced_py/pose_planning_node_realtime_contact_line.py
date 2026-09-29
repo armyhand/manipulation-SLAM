@@ -59,9 +59,11 @@ except Exception as exc:
 6. 还需进一步加入摩擦因子，并思考如何区分线接触、点接触和面接触。最终的目标是实现接触后继续稳态偏转，然后根据估计的结果修正旋转中心和旋转轴，继续偏转，最终实现稳定接触和鲁棒估计。
 7. 需引入旋转的力矩补偿，避免绕不同轴旋转时力矩差距过大。
 260901问题：因子图估计时间随帧数增加而延长，导致轨迹执行变慢（以解决）。
-260903问题：因子图估计与数据离线估计结果不一样。
+260903问题：因子图估计与数据离线估计结果不一样。(已解决，问题的根本原因在于因子图的初值对因子图的估计会造成巨大的影响)
+260929问题：摩擦系数估计出来了，但是还未在偏转中进行使用，造成滑移。此外力矩的估计还未进行回归。
 
 """
+
 
 
 class MinimumJerkPosePlanner(Node):
@@ -70,18 +72,37 @@ class MinimumJerkPosePlanner(Node):
         self.Q = None
         self.cmd = Pose()
         self.v_vec = None
+        self.contact_region = None
+        self.contact_region_candidates = []
+        self._contact_region_samples = []
+        self._contact_region_stable_count = 0
+        self._contact_approach_velocity = None
+        self._trajectory_command_position = None
+        self._trajectory_velocity = np.zeros(3, dtype=float)
+        self.admittance_displacement = np.zeros(6, dtype=float)
+        self.admittance_velocity = np.zeros(6, dtype=float)
+        self.admittance_mass = np.array([80.0, 80.0, 80.0, 80.0, 80.0, 80.0], dtype=float)
+        self.admittance_stiffness = np.array([1000.0, 1000.0, 1000.0, 12000.0, 12000.0, 12000.0],dtype=float)
+        self.admittance_damping = 3 * np.sqrt(self.admittance_mass * self.admittance_stiffness)
+        self.admittance_target_wrench = np.array([0.01, 0.01, 2.0, 0.0, 0.0, 0.0], dtype=float)
         self.initial = None
         self.current = None
         self.target = None
         self.total_time = 0.0
         self.sampling_time = 0.01
         self.freq = 100
+        self.velocity = 0.0045 ##轨迹的期望运动速度m/s
+        self.rotation_w = 0.05 ##轨迹的期望角速度rad/s
         self.start_time = None
         self.X, self.Y, self.Z = None, None, None
         self.world_rotation_line_point = np.array([0.0, 0.0, 0.0], dtype=np.float64)
         self.world_rotation_line_direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         self.world_rotation_angle = np.deg2rad(-20.0)
         self.world_rotation_position_step = 0.006
+        self.small_rotation_sequence = None
+        # N=3 第二阶段：让旋转轴绕其垂线完整扫掠一周。
+        self.world_rotation_axis_sweep_angle = 2.0 * np.pi
+        self.world_rotation_axis_sweep_step = 0.006
 
         self.pose_pub = self.create_publisher(Pose, '/lbr/command/pose', 1)
         self.pose_sub = self.create_subscription(Pose, '/lbr/state/pose',
@@ -128,6 +149,8 @@ class MinimumJerkPosePlanner(Node):
         self.fordis_left_mean, self.fordis_right_mean = 0.0, 0.0
 
         self.force_inside_flag = False
+        self.force_above_flag = False
+        self.moment_above_flag = False
         self.force_control_flag = False
         self.force_pid_integral = 0.0
         self.force_pid_previous_error = 0.0
@@ -137,6 +160,7 @@ class MinimumJerkPosePlanner(Node):
         self.move_hori_flag = False
         self.i = 0
         self.N = 0
+        self.contact_rotation_motion_count = 0
         self.n_now = 0
 
         self.window_size = 20
@@ -153,11 +177,40 @@ class MinimumJerkPosePlanner(Node):
         ], dtype=float)
         self.contact_start_frame = None
         self.contact_active = False
+        self.contact_rotation_motion_count = 0
         self.contact_force_threshold = 0.2
         self.contact_threshold = None
         self.slip_threshold = None
         self.slip_score = None
         self.Slip_score = []
+        self.slip_pause = False
+        self.contact_lost_pause = False
+        self._slip_recovery_count = 0
+        self._contact_recovery_count = 0
+        self._safety_log_counter = 0
+        self._safety_pause_reason = 'none'
+        self._tactile_feature_score = 0.0
+        self._slip_feature_history = []
+        self.friction_coefficient = 0.3
+        self.friction_coefficient_min = 0.1
+        self.friction_coefficient_max = 1.5
+        self.friction_safety_factor = 0.7
+        self._tangent_direction = np.zeros(3, dtype=float)
+        self._friction_margin = 0.0
+        self._friction_samples = []
+        self._tangent_admittance_scale = 1.0
+        self.active_probe_displacement = 0.002
+        self.active_probe_start_frame = None
+        self.active_probe_positions = []
+        self.active_probe_forces = []
+        self.active_probe_origin = None
+        self.active_probe_command_position = None
+        self.active_probe_orientation = None
+        self.active_probe_direction_index = 0
+        self.active_probe_returning = False
+        self.active_probe_motion_count = 0
+        self.active_contact_stiffness = None
+        self.estimated_contact_normal = None
         self.feature_series_base = None
         self.contact_line_frame_step = 5
         self.contact_line_min_frames = self.contact_line_frame_step + 1
@@ -477,7 +530,7 @@ class MinimumJerkPosePlanner(Node):
             forces=forces,
             moments=moments,
         )
-        estimate = estimator.run()
+        estimate = estimator.run_current()
 
         representative_direction = normalize(np.mean(estimate["line_directions"], axis=0))
         if np.dot(representative_direction, estimate["line_directions"][0]) < 0.0:
@@ -766,6 +819,33 @@ class MinimumJerkPosePlanner(Node):
 
     def _reset_contact_detection_state(self):
         self.contact_active = False
+        self.contact_rotation_motion_count = 0
+        self.contact_region = None
+        self.contact_region_candidates = []
+        self._contact_region_samples = []
+        self._contact_region_stable_count = 0
+        self._contact_approach_velocity = None
+        self.slip_pause = False
+        self.contact_lost_pause = False
+        self._slip_recovery_count = 0
+        self._contact_recovery_count = 0
+        self._slip_feature_history = []
+        self._friction_samples = []
+        self.friction_coefficient = 0.3
+        self._friction_margin = 0.0
+        self._tangent_admittance_scale = 1.0
+        self.active_probe_start_frame = None
+        self.active_probe_positions = []
+        self.active_probe_forces = []
+        self.active_probe_origin = None
+        self.active_probe_command_position = None
+        self.active_probe_orientation = None
+        self.active_probe_direction_index = 0
+        self.active_probe_returning = False
+        self.active_probe_motion_count = 0
+        self.active_contact_stiffness = None
+        self.estimated_contact_normal = None
+        self._reset_admittance_state()
         self.contact_line_result = None
         self.contact_line_incremental_result = None
         self.contact_line_rebuild_result = None
@@ -788,13 +868,14 @@ class MinimumJerkPosePlanner(Node):
             self.cmd.position.z = self.initial.position.z
             self.cmd.orientation = self.initial.orientation
             self.get_logger().info('Initial pose received.')
+            
         else:
             # 如果已有初始与目标 且 未启动轨迹
             if self.start_time is None:
                 if any(v is None for v in (self.Fr_r, self.Fr_l, self.Mr_r, self.Mr_l)):
                     self.get_logger().info('Waiting for tac3d information.')
                 else:
-                    if -10 < self.Fr_r[0, 2] < -8 and -10 < self.Fr_l[0, 2] < -8 and self.force_inside_flag == False:
+                    if -10.5 < self.Fr_r[0, 2] < -8 and -10.5 < self.Fr_l[0, 2] < -8 and self.force_inside_flag == False:
                         # self.force_inside_flag = True
                         self.start_time = self.get_clock().now().to_msg().sec + \
                                           self.get_clock().now().to_msg().nanosec * 1e-9
@@ -904,7 +985,7 @@ class MinimumJerkPosePlanner(Node):
         line_direction = np.asarray(line_direction, dtype=np.float64)
         direction_norm = np.linalg.norm(line_direction)
         if direction_norm < 1e-12:
-            return [start_position.copy()], [start_quat.copy()]
+            return [start_position.copy()], [base_quat.copy()]
 
         line_direction = line_direction / direction_norm
         relative_position = start_position - line_point
@@ -933,6 +1014,49 @@ class MinimumJerkPosePlanner(Node):
 
         return path_points, path_quats
 
+    def generate_axis_sweep_path_points(self, start_position, base_quat, line_point,
+                                        line_direction, sweep_angle, position_step,
+                                        fixed_rotation_angle):
+        """Sweep an axis while recomputing a fixed-angle end-effector orientation."""
+        start_position = np.asarray(start_position, dtype=np.float64)
+        base_quat = np.asarray(base_quat, dtype=np.float64)
+        line_point = np.asarray(line_point, dtype=np.float64)
+        line_direction = np.asarray(line_direction, dtype=np.float64)
+        direction_norm = np.linalg.norm(line_direction)
+        if direction_norm < 1e-12:
+            return [start_position.copy()], [start_quat.copy()]
+        line_direction = line_direction / direction_norm
+
+        # Select a stable world-frame perpendicular.  The fallback avoids a near-zero
+        # cross product when the line is parallel to the preferred reference vector.
+        reference = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        if abs(np.dot(line_direction, reference)) > 0.9:
+            reference = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        sweep_direction = np.cross(line_direction, reference)
+        sweep_direction /= np.linalg.norm(sweep_direction)
+
+        relative_position = start_position - line_point
+        radius = np.linalg.norm(relative_position -
+                                np.dot(relative_position, sweep_direction) * sweep_direction)
+        arc_length = radius * abs(sweep_angle)
+        if arc_length < 1e-12 or position_step <= 0.0:
+            num_segments = 1
+        else:
+            num_segments = max(1, int(np.ceil(arc_length / position_step)))
+
+        path_points, path_quats = [], []
+        base_rotation = R.from_quat(base_quat)
+        for step_index in range(1, num_segments + 1):
+            angle = sweep_angle * step_index / num_segments
+            sweep_rotation = R.from_rotvec(sweep_direction * angle)
+            rotated_position = sweep_rotation.apply(start_position - line_point) + line_point
+            current_line_direction = sweep_rotation.apply(line_direction)
+            fixed_angle_rotation = R.from_rotvec(current_line_direction * fixed_rotation_angle)
+            rotated_quat = (fixed_angle_rotation * base_rotation).as_quat()
+            path_points.append(rotated_position)
+            path_quats.append(rotated_quat)
+        return path_points, path_quats
+
     def As_planner(self):
         if self.initial is not None and self.target is not None:
             M = Motion_planning(dx=0.001, dy=0.001, dz=0.001)
@@ -952,40 +1076,84 @@ class MinimumJerkPosePlanner(Node):
                 Points_recover.append(start.copy() + np.array([0.0, 0.0, 0.01]))
                 Points_recover.append(start.copy() + np.array([0.0, 0.0, 0.0]))
                 Quats_recover.append(np.array([0.0,
-                                               math.sin(85.0 * math.pi / 180),
+                                               math.sin(89.9 * math.pi / 180),
                                                0.0,
-                                               math.cos(85.0 * math.pi / 180)]))
+                                               math.cos(89.9 * math.pi / 180)]))
                 Quats_recover.append(np.array([0.0,
-                                               math.sin(80.0 * math.pi / 180),
+                                               math.sin(90.0 * math.pi / 180),
                                                0.0,
-                                               math.cos(80.0 * math.pi / 180)]))
+                                               math.cos(90.0 * math.pi / 180)]))
 
-            if self.N == 1:  ##初次接触，一定要有足够的运动幅度
+            if self.N == 1:  ##初次接触，一定要有足够的运动幅度（接触之后判断接触大致区域）
                 Points_recover.append(start.copy() + np.array([0.0, 0.0, -0.05]))
                 Points_recover.append(start.copy() + np.array([0.0, 0., -0.1]))
                 Quats_recover.append(np.array([0.0,
-                                                math.sin(80.01 * math.pi / 180),
-                                                0.0,
-                                                math.cos(80.01 * math.pi / 180)]))
+                                               math.sin(89.99 * math.pi / 180),
+                                               0.0,
+                                               math.cos(89.99 * math.pi / 180)]))
                 Quats_recover.append(np.array([0.0,
-                                                math.sin(80.0 * math.pi / 180),
-                                                0.0,
-                                                math.cos(80.0 * math.pi / 180)]))
+                                               math.sin(90.0 * math.pi / 180),
+                                               0.0,
+                                               math.cos(90.0 * math.pi / 180)]))
 
             if self.N == 2:
-                self.world_rotation_angle = np.deg2rad(5.0)
-                self.world_rotation_line_point, self.world_rotation_line_direction = self._get_rotation_line_or_default()
+                probe_directions = (
+                    ('+X', np.array([1.0, 0.0, 0.0], dtype=np.float64)),
+                    ('-X', np.array([-2.0, 0.0, 0.0], dtype=np.float64)),
+                    ('+X', np.array([1.0, 0.0, 0.0], dtype=np.float64)),
+                    ('+Y', np.array([0.0, 1.0, 0.0], dtype=np.float64)),
+                    ('-Y', np.array([0.0, -2.0, 0.0], dtype=np.float64)),
+                    ('+Y', np.array([0.0, 1.0, 0.0], dtype=np.float64)),
+                    ('+Z', np.array([0.0, 0.0, 1.0], dtype=np.float64)),
+                    ('-Z', np.array([0.0, 0.0, -2.0], dtype=np.float64)),
+                )
+                if self.active_probe_start_frame is None:
+                    self.active_probe_start_frame = max(len(self.Pose) - 1, 0)
+                    self.active_probe_positions = []
+                    self.active_probe_forces = []
+                    self.active_probe_origin = start.copy()
+                    self.active_probe_motion_count = 0
+                if self.active_probe_motion_count < len(probe_directions):
+                    axis_name, axis_direction = probe_directions[self.active_probe_motion_count]
+                    Points_recover.append(
+                        start.copy() + 0.5 * self.active_probe_displacement * axis_direction)
+                    Points_recover.append(
+                        start.copy() + self.active_probe_displacement * axis_direction)
+                    self.get_logger().info(
+                        f'Active stiffness probe {axis_name}: planned displacement is 2 mm.')
+                else:
+                    return_offset = self.active_probe_origin - start
+                    if np.linalg.norm(return_offset) < 1e-6:
+                        self._estimate_active_stiffness_and_normal()
+                        self.active_probe_start_frame = None
+                        self.active_probe_origin = None
+                        self.active_probe_motion_count = 0
+                        self.initial = None
+                        self.N += 1
+                        return
+                    Points_recover.append(start.copy() + 0.5 * return_offset)
+                    Points_recover.append(self.active_probe_origin.copy())
+                    self.get_logger().info('Active stiffness probe: returning to N=2 initial position.')
+                Quats_recover.append(q0.copy())
+                Quats_recover.append(q0.copy())
+
+            if self.N == 3: ##在判断接触类型的基础上，选定偏转方向和旋转轴，然后进行偏转，
+                self.small_rotation_sequence = (
+                    (np.deg2rad(-4.0), np.array([0.0, 1.0, 0.0], dtype=np.float64)),
+                    (np.deg2rad(4.0), np.array([0.0, 1.0, 0.0], dtype=np.float64)),
+                    # (np.deg2rad(3.0), np.array([1.0, 0.0, 0.0], dtype=np.float64)),
+                    # (np.deg2rad(-3.0), np.array([1.0, 0.0, 0.0], dtype=np.float64)),
+                )
+                rotation_index = min(
+                    self.contact_rotation_motion_count,
+                    len(self.small_rotation_sequence) - 1,
+                )
+                self.world_rotation_angle = self.small_rotation_sequence[rotation_index][0]
+                # self.world_rotation_line_point, self.world_rotation_line_direction = self._get_rotation_line_or_default()
                 self.world_rotation_line_point = np.array(
-                    [self.current.position.x, self.current.position.y, self.current.position.z - 0.5],
+                    [self.current.position.x, self.current.position.y, self.current.position.z - 0.4],
                     dtype=np.float64)
-                ###
-                self.world_rotation_line_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-                # if abs(self.R_x[-1]) > abs(self.R_y[-1]) and abs(self.R_x[-1]) > abs(self.R_z[-1]):
-                #     self.world_rotation_line_direction = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-                # if abs(self.R_y[-1]) > abs(self.R_x[-1]) and abs(self.R_y[-1]) > abs(self.R_z[-1]):
-                #     self.world_rotation_line_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-                # if abs(self.R_z[-1]) > abs(self.R_x[-1]) and abs(self.R_z[-1]) > abs(self.R_y[-1]):
-                #     self.world_rotation_line_direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+                self.world_rotation_line_direction = self.small_rotation_sequence[rotation_index][1]
                 self.get_logger().info(
                     f'The rotation center is {self.world_rotation_line_point}, the direction is {self.world_rotation_line_direction}')
                 rotation_path_points, rotation_path_quats = self.generate_rotation_path_points(
@@ -998,52 +1166,293 @@ class MinimumJerkPosePlanner(Node):
                 )
                 Points_recover.extend(rotation_path_points)
                 Quats_recover.extend(rotation_path_quats)
-            if self.N == 3:
-                self.world_rotation_angle = np.deg2rad(-10.0)
-                self.world_rotation_line_point, self.world_rotation_line_direction = self._get_rotation_line_or_default()
-                self.world_rotation_line_point = np.array(
-                    [self.current.position.x, self.current.position.y, self.current.position.z - 0.5],
-                    dtype=np.float64)
-                self.world_rotation_line_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-                self.get_logger().info(
-                    f'The rotation center is {self.world_rotation_line_point}, the direction is {self.world_rotation_line_direction}')
-                rotation_path_points, rotation_path_quats = self.generate_rotation_path_points(
-                    start_position=start,
-                    start_quat=q0,
-                    line_point=self.world_rotation_line_point,
-                    line_direction=self.world_rotation_line_direction,
-                    total_angle=self.world_rotation_angle,
-                    position_step=self.world_rotation_position_step,
-                )
-                Points_recover.extend(rotation_path_points)
-                Quats_recover.extend(rotation_path_quats)
+
+                # # 第二阶段：固定第一阶段得到的末端旋转角度，令旋转轴绕其
+                # # 垂线旋转一周。仅位置随轴运动，避免扫掠过程引入末端自转。
+                # sweep_start_position = np.asarray(Points_recover[-1], dtype=np.float64)
+                # sweep_path_points, sweep_path_quats = self.generate_axis_sweep_path_points(
+                #     start_position=sweep_start_position,
+                #     base_quat=q0,
+                #     line_point=self.world_rotation_line_point,
+                #     line_direction=self.world_rotation_line_direction,
+                #     sweep_angle=self.world_rotation_axis_sweep_angle,
+                #     position_step=self.world_rotation_axis_sweep_step,
+                #     fixed_rotation_angle=self.world_rotation_angle,
+                # )
+                # Points_recover.extend(sweep_path_points)
+                # Quats_recover.extend(sweep_path_quats)
+                # self.get_logger().info(
+                #     f'Rotating the reference axis around perpendicular {self.world_rotation_axis_sweep_angle:.3f} rad')
             if self.N > 3:
                 self.get_logger().info('End the trajectory!')
+            if len(Points_recover) != len(Quats_recover):
+                self.get_logger().error(
+                    f'Invalid trajectory: {len(Points_recover)} points but {len(Quats_recover)} orientations.')
+                return
             for j in range(len(Points_recover) - 1):
                 quat_angle = abs(np.arccos(np.clip(np.dot(Quats_recover[j], Quats_recover[j + 1]), -1.0, 1.0)) * 2.0)
-                self.total_time += max(np.linalg.norm(Points_recover[j + 1] - Points_recover[j]) / 0.006,
-                                       quat_angle / 0.055)
+                self.total_time += max(np.linalg.norm(Points_recover[j + 1] - Points_recover[j]) / self.velocity,
+                                       quat_angle / self.rotation_w)
 
             if Points_recover is not None:
                 print(f'current_pose = {self.current}')
                 # ===== 新增: 等待键盘输入 'q' 才继续 =====
-                self.get_logger().info("Press 'q' and Enter to continue...")
-                while True:
-                    user_in = input()
-                    if user_in == 'q':
-                        break
-                    else:
-                        print("无效输入，请输入 'q' 或 'w'")
+                if self.active_probe_motion_count == 0:
+                    self.get_logger().info("Press 'q' and Enter to continue...")
+                    while True:
+                        user_in = input()
+                        if user_in == 'q':
+                            break
+                        else:
+                            print("无效输入，请输入 'q' 或 'w'")
                 self.X, self.Y, self.Z, self.Q = M.path_smoothing(Path_points=Points_recover, Path_quats=Quats_recover,
                                                                   t_final=self.total_time,
                                                                   freq=self.freq)  ##轨迹使用二次B样条曲线进行平滑处理
+                self._trajectory_command_position = None
+                self._trajectory_velocity[:] = 0.0
+                self.admittance_displacement[:] = 0.0
+                self.admittance_velocity[:] = 0.0
                 self.get_logger().info(f"Q.shape={self.Q.shape}")
                 self.get_logger().info("path_points get !")
             else:
                 self.get_logger().info("the path is not found!!")
 
+    def _smooth_trajectory_position(self, desired_position):
+        """Limit commanded Cartesian velocity and acceleration between cycles."""
+        desired_position = np.asarray(desired_position, dtype=float)
+        if self._trajectory_command_position is None:
+            self._trajectory_command_position = np.array([
+                self.cmd.position.x, self.cmd.position.y, self.cmd.position.z
+            ], dtype=float)
+            self._trajectory_velocity[:] = 0.0
+
+        dt = 1.0 / self.freq
+        max_speed = 1.2 * self.velocity
+        max_acceleration = 0.03
+        requested_velocity = (desired_position - self._trajectory_command_position) / dt
+        requested_speed = np.linalg.norm(requested_velocity)
+        if requested_speed > max_speed:
+            requested_velocity *= max_speed / requested_speed
+        velocity_delta = requested_velocity - self._trajectory_velocity
+        max_velocity_delta = max_acceleration * dt
+        velocity_delta_norm = np.linalg.norm(velocity_delta)
+        if velocity_delta_norm > max_velocity_delta:
+            velocity_delta *= max_velocity_delta / velocity_delta_norm
+        self._trajectory_velocity += velocity_delta
+        self._trajectory_command_position += self._trajectory_velocity * dt
+        return self._trajectory_command_position.copy()
+
+    def _update_admittance(self, f_vec, r_vec):
+        """Update six-axis compliant displacement from force and moment."""
+        dt = 1.0 / self.freq
+        measured_wrench = np.concatenate((f_vec, r_vec))
+        if not np.all(np.isfinite(measured_wrench)):
+            self.admittance_velocity *= 0.9
+            return self.admittance_displacement.copy()
+        wrench_error = measured_wrench - self.admittance_target_wrench
+        acceleration = (
+            wrench_error
+            - self.admittance_damping * self.admittance_velocity
+            - self.admittance_stiffness * self.admittance_displacement
+        ) / self.admittance_mass
+        self.admittance_velocity += acceleration * dt
+
+        velocity_limits = np.array([0.001, 0.001, 0.001, 0.03, 0.03, 0.03])
+        # displacement_limits = np.array([0.01, 0.01, 0.008, 0.12, 0.12, 0.12])
+        self.admittance_velocity = np.clip(
+            self.admittance_velocity, -velocity_limits, velocity_limits)
+        self.admittance_displacement += self.admittance_velocity * dt
+        # self.admittance_displacement = np.clip(
+        #     self.admittance_displacement, -displacement_limits, displacement_limits)
+        return self.admittance_displacement.copy()
+
+    def _reset_admittance_state(self):
+        self.admittance_displacement[:] = 0.0
+        self.admittance_velocity[:] = 0.0
+
+    def _update_contact_safety(self, f_vec, r_vec):
+        """Update friction margin and tactile slip state without filtering."""
+        planned_direction = np.asarray(self.v_vec, dtype=float) if self.v_vec is not None else np.zeros(3)
+        self._tangent_direction[:] = 0.0
+        if self.estimated_contact_normal is not None:
+            normal = np.asarray(self.estimated_contact_normal, dtype=float)
+            normal_norm = np.linalg.norm(normal)
+            if normal_norm > 1e-9 and np.all(np.isfinite(normal)) and np.all(np.isfinite(planned_direction)):
+                normal = normal / normal_norm
+                tangent = planned_direction - np.dot(planned_direction, normal) * normal
+                tangent_norm = np.linalg.norm(tangent)
+                if tangent_norm > 1e-9:
+                    self._tangent_direction = tangent / tangent_norm
+                    tangent_force = abs(float(np.dot(f_vec, self._tangent_direction)))
+                    normal_force = abs(float(np.dot(f_vec, normal)))
+                else:
+                    normal_force = 0.0
+            else:
+                normal_force = 0.0
+        else:
+            normal_force = 0.0
+
+        if np.linalg.norm(self._tangent_direction) > 0.0 and np.all(np.isfinite(f_vec)):
+            if normal_force > 0.1:
+                observed_mu = tangent_force / normal_force
+                self._friction_samples.append(observed_mu)
+                self._friction_samples = self._friction_samples[-5:]
+                self.friction_coefficient = float(np.mean(self._friction_samples))
+            friction_margin = tangent_force / max(
+                self.friction_safety_factor * self.friction_coefficient * normal_force, 1e-6)
+        else:
+            friction_margin = 0.0
+
+        tactile_slip = False
+        if len(self.Force_dis_left) >= 2 and len(self.Force_dis_right) >= 2:
+            try:
+                left_features = compute_side_features(
+                    np.asarray(self.Force_dis_left[-2:], dtype=float),
+                    np.asarray(self.Position_left[-2:], dtype=float))
+                right_features = compute_side_features(
+                    np.asarray(self.Force_dis_right[-2:], dtype=float),
+                    np.asarray(self.Position_right[-2:], dtype=float))
+                feature_values = np.array([
+                    left_features["distribution_change"][-1] + right_features["distribution_change"][-1],
+                    left_features["center_shift"][-1] + right_features["center_shift"][-1],
+                    left_features["ratio_change"][-1] + right_features["ratio_change"][-1],
+                    left_features["resultant_change"][-1] + right_features["resultant_change"][-1],
+                ], dtype=float)
+                feature_score = np.max(feature_values / np.array([0.15, 2.0, 0.2, 0.3]))
+                tactile_slip = bool(feature_score > 3.0)
+            except (ValueError, IndexError, TypeError):
+                feature_score = 0.0
+        else:
+            feature_score = 0.0
+        self._tactile_feature_score = float(feature_score)
+
+    @staticmethod
+    def _apply_orientation_offset(base_quat, delta_quat):
+        """Apply a world-frame compliance rotation to a trajectory quaternion."""
+        base_quat = np.asarray(base_quat, dtype=float)
+        delta_quat = np.asarray(delta_quat, dtype=float)
+        if (not np.all(np.isfinite(base_quat)) or
+                not np.all(np.isfinite(delta_quat)) or
+                np.linalg.norm(base_quat) < 1e-9 or
+                np.linalg.norm(delta_quat) < 1e-9):
+            return base_quat
+        base_quat /= np.linalg.norm(base_quat)
+        delta_quat /= np.linalg.norm(delta_quat)
+        return (R.from_quat(delta_quat) * R.from_quat(base_quat)).as_quat()
+
+    def _update_contact_region(self, f_vec, r_vec):
+        """以主受力轴近似单点接触；力矩单位 N·mm，物体轴与夹爪轴一致。"""
+        if self.N != 1:
+            return
+        if not self.contact_active:
+            self._contact_region_samples.clear()
+            self._contact_region_stable_count = 0
+            self.contact_region = None
+            self.contact_region_candidates = []
+            if self.v_vec is not None and np.linalg.norm(self.v_vec) > 1e-9:
+                self._contact_approach_velocity = np.asarray(self.v_vec, dtype=float).copy()
+            return
+        wrench = np.concatenate((f_vec, r_vec))
+        if (not np.all(np.isfinite(wrench)) or
+                not (0.5 < np.linalg.norm(f_vec) < 10.0 and np.linalg.norm(r_vec) < 40.0)):
+            self._contact_region_samples.clear()
+            self._contact_region_stable_count = 0
+            self.contact_region = None
+            self.contact_region_candidates = []
+            return
+        self._contact_region_samples.append(wrench)
+        self._contact_region_samples = self._contact_region_samples[-200:]
+        if len(self._contact_region_samples) < 200:
+            return
+        samples = np.asarray(self._contact_region_samples)
+        first_half, second_half = np.split(samples, 2)
+        mean_change = np.abs(np.mean(second_half, axis=0) - np.mean(first_half, axis=0))
+        std_change = np.abs(np.std(second_half, axis=0) - np.std(first_half, axis=0))
+        mean_tolerance = np.array([0.2, 0.2, 0.2, 2.0, 2.0, 2.0])
+        std_tolerance = np.array([0.2, 0.2, 0.2, 1.0, 1.0, 1.0])
+        if np.any(mean_change > mean_tolerance) or np.any(std_change > std_tolerance):
+            self._contact_region_stable_count = 0
+            self.contact_region = None
+            self.contact_region_candidates = []
+            return
+        self._contact_region_stable_count = min(self._contact_region_stable_count + 1, 2)
+        if self._contact_region_stable_count < 2:
+            return
+        force, torque = np.mean(samples, axis=0).reshape(2, 3)
+        velocity = self.v_vec if self.v_vec is not None else self._contact_approach_velocity
+        if velocity is None or np.linalg.norm(velocity) <= 1e-9:
+            self.contact_region = None
+            self.contact_region_candidates = []
+            return
+        orientation = self.current.orientation
+        local_velocity = R.from_quat([
+            orientation.x, orientation.y, orientation.z, orientation.w
+        ]).inv().apply(np.asarray(velocity, dtype=float))
+        normal_axis = int(np.argmax(np.abs(local_velocity)))
+        normal_force = np.zeros(3)
+        normal_force[normal_axis] = force[normal_axis]
+        if (abs(force[normal_axis]) < 1.5 * np.linalg.norm(force - normal_force)
+                or local_velocity[normal_axis] * force[normal_axis] >= 0.0):
+            self.contact_region = None
+            self.contact_region_candidates = []
+            return
+        signs = np.zeros(3, dtype=int)
+        transverse_position = np.cross(normal_force, torque) / np.dot(normal_force, normal_force)
+        signs = np.where(np.abs(transverse_position) > 1.0,
+                         np.sign(transverse_position), 0).astype(int)
+        signs[normal_axis] = int(np.sign(local_velocity[normal_axis]))
+        candidates = [
+            '/'.join(('+' if sign > 0 else '-') + axis
+                     for sign, axis in zip(octant, 'XYZ'))
+            for octant in ((sx, sy, sz) for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1))
+            if all(known == 0 or known == sign for known, sign in zip(signs, octant))
+        ]
+        if candidates != self.contact_region_candidates:
+            self.get_logger().info(f'Contact region candidates (object frame): {candidates}')
+        self.contact_region_candidates = candidates
+        self.contact_region = candidates[0] if len(candidates) == 1 else None
+
+    def _estimate_active_stiffness_and_normal(self):
+        """Estimate contact stiffness and normal from the completed six-axis probe."""
+        positions = np.asarray(self.active_probe_positions, dtype=float).reshape(-1, 3)
+        forces = np.asarray(self.active_probe_forces, dtype=float).reshape(-1, 3)
+        if len(positions) < 8 or len(forces) != len(positions):
+            self.get_logger().warning('Not enough active-probe samples for stiffness estimation.')
+            return
+        baseline_position = positions[0]
+        baseline_force = forces[0]
+        displacement = positions - baseline_position
+        force_change = forces - baseline_force
+        valid = np.all(np.isfinite(displacement), axis=1) & np.all(np.isfinite(force_change), axis=1)
+        valid &= np.linalg.norm(displacement, axis=1) > 1e-6
+        if np.count_nonzero(valid) < 6:
+            self.get_logger().warning('Active-probe displacement is insufficient for stiffness estimation.')
+            return
+        displacement = displacement[valid]
+        force_change = force_change[valid]
+        if np.linalg.matrix_rank(displacement) < 3:
+            self.get_logger().warning('Active-probe displacement does not span three axes.')
+            return
+        stiffness = np.linalg.lstsq(displacement, force_change, rcond=None)[0].T
+        stiffness = 0.5 * (stiffness + stiffness.T)
+        eigenvalues, eigenvectors = np.linalg.eigh(-stiffness) ##力和位移呈负相关
+        eigenvalues = np.maximum(eigenvalues, 0.0)
+        stiffness = (eigenvectors * eigenvalues) @ eigenvectors.T
+        if eigenvalues[-1] <= 1e-6:
+            self.get_logger().warning('Active-probe stiffness is not observable.')
+            return
+        normal = eigenvectors[:, int(np.argmax(eigenvalues))]
+        mean_force = np.mean(forces[valid], axis=0)
+        if np.linalg.norm(mean_force) > 1e-9 and np.dot(normal, mean_force) < 0.0:
+            normal = -normal
+        self.active_contact_stiffness = stiffness
+        self.estimated_contact_normal = normal / max(np.linalg.norm(normal), 1e-12)
+        self.get_logger().info(
+            f'Active stiffness={np.diag(stiffness)}, contact normal={self.estimated_contact_normal}')
+
+
     def publish_at_time(self):
-        self.cmd = self.current  ##发布量的原始值为当前位置
+        self.cmd = copy.deepcopy(self.current)  ##发布量的原始值为当前位置
         current_time = self.get_clock().now().to_msg().sec + \
                        self.get_clock().now().to_msg().nanosec * 1e-9
         if not self._realtime_tactile_sample_ready():
@@ -1074,11 +1483,6 @@ class MinimumJerkPosePlanner(Node):
                 [self.current.orientation.x, self.current.orientation.y, self.current.orientation.z,
                  self.current.orientation.w]))
             self.Time.append(current_time)
-
-            ##计算偏移量(刚度越大，偏移量应该越小)
-            delta_z = np.sign(f_z - 2) * min(0.0035, 0.0035 * abs(f_z - 2)) if abs(f_z) > 0.3 else 0.0
-            delta_x = np.sign(f_x - 0.05) * min(0.005, 0.005 * abs(f_x - 0.05)) if abs(f_x) > 0.1 else 0.0
-            delta_y = np.sign(f_y - 0.1) * min(0.005, 0.005 * abs(f_y - 0.1)) if abs(f_y) > 0.2 else 0.0
 
             ##检测contact是否开始，然后进行估计
             baseline_frames = 30
@@ -1162,19 +1566,62 @@ class MinimumJerkPosePlanner(Node):
                 ##计算合力矢量
                 f_vec = np.array([f_x, f_y, f_z])
                 r_vec = moment[-1]
+                force_window = np.column_stack((
+                    list(self.F_x[-(self.window_size - 1):]) + [f_x],
+                    list(self.F_y[-(self.window_size - 1):]) + [f_y],
+                    list(self.F_z[-(self.window_size - 1):]) + [f_z],
+                ))
+                moment_window = np.column_stack((
+                    list(self.R_x[-(self.window_size - 1):]) + [r_vec[0]],
+                    list(self.R_y[-(self.window_size - 1):]) + [r_vec[1]],
+                    list(self.R_z[-(self.window_size - 1):]) + [r_vec[2]],
+                ))
+                f_projec_mean = np.mean(force_window, axis=0)
+                r_projec_mean = np.mean(moment_window, axis=0)
+                force_norm = np.linalg.norm(f_projec_mean)
+                moment_norm = np.linalg.norm(r_projec_mean)
+                force_in_target_range = 0.5 < force_norm < 10.0
+                moment_in_target_range = 0.05 < moment_norm < 40.0
+                in_target_range = force_in_target_range and moment_in_target_range
+                if self.N == 2 and self.active_probe_start_frame is not None:
+                    self.active_probe_positions.append(
+                        np.array([self.current.position.x, self.current.position.y, self.current.position.z],
+                                 dtype=np.float64))
+                    self.active_probe_forces.append(f_vec.copy())
                 self.R_x.append(r_vec[0])
                 self.R_y.append(r_vec[1])
                 self.R_z.append(r_vec[2])
 
+                self._update_contact_region(f_vec, r_vec)
+                self._update_contact_safety(f_vec, r_vec)
+                if self.contact_active and not self.force_control_flag:
+                    admittance_offset = self._update_admittance(f_vec, r_vec)
+                else:
+                    self.admittance_displacement[:] = 0.0
+                    self.admittance_velocity[:] = 0.0
+                    admittance_offset = self.admittance_displacement.copy()
+                delta_x, delta_y, delta_z = admittance_offset[:3]
+                # tangent_norm = np.linalg.norm(self._tangent_direction)
+                # if tangent_norm > 1e-9:
+                #     tangent_component = np.dot(admittance_offset[:3], self._tangent_direction)
+                #     delta_x, delta_y, delta_z = (
+                #         admittance_offset[:3]
+                #         - (1.0 - self._tangent_admittance_scale)
+                #         * tangent_component * self._tangent_direction
+                #     )
+                if self.N == 2:
+                    delta_x, delta_y, delta_z = 0.0, 0.0, 0.0
+                    delta_quat = np.array([0.0, 0.0, 0.0, 1.0])
+                else:
+                    delta_quat = R.from_rotvec(admittance_offset[3:]).as_quat()
+
                 if self.force_control_flag:  ##接触力调整阶段，保持一个恒定的接触力（目前为z方向恒定，后续扩展到其他方向）
-                    force_norm = np.linalg.norm(f_vec)
-                    moment_norm = np.linalg.norm(r_vec)
-                    force_in_target_range = 0.5 < force_norm < 4.0
-                    moment_in_target_range = 0.5 < moment_norm < 40.0
                     target_range_adjust = (0.5 < moment_norm < 30.0 and 1.6 < force_norm < 2.0) or (18 < moment_norm < 22.0 and 0.7 < force_norm < 2.0)
 
                     if target_range_adjust:
                         self.force_control_flag = False
+                        self.force_above_flag = False
+                        self.moment_above_flag = False
                         self.force_pid_integral = 0.0
                         self.force_pid_previous_error = 0.0
                         self.force_pid_cycles = 0
@@ -1185,101 +1632,158 @@ class MinimumJerkPosePlanner(Node):
                             self.initial = None
                             self.total_time = 0.0
                             self.n_now = 0
+                            self.admittance_displacement[:] = 0.0
+                            self.admittance_velocity[:] = 0.0
                             self.X, self.Y, self.Z, self.Q = None, None, None, None
                             self.force_inside_flag = False
                             self.z_delta = 0.0
                             self.N += 1
                     else:
-                        self.force_pid_cycles += 1
-                        target_moment, target_force = 20.0, 1.8
-                        if not force_in_target_range and not moment_in_target_range:
-                            error = (0.3 * (moment_norm - target_moment) +
-                                     force_norm - target_force)
-                        elif not force_in_target_range:
+                        # self.force_pid_cycles += 1
+                        target_moment, target_force = 19.0, 1.7
+                        if self.force_above_flag and not self.moment_above_flag:
                             error = force_norm - target_force
-                        else:
+                        elif self.moment_above_flag and not self.force_above_flag:
                             error = 0.3 * (moment_norm - target_moment)
+                        elif self.force_above_flag and self.moment_above_flag:
+                            error = (0.3 * (moment_norm - target_moment) +
+                                                                 force_norm - target_force)
+                        else:
+                            self.get_logger().info('Unexpected force/moment state.')
+                            error = 0.0
 
                         self.force_pid_integral = np.clip(
                             self.force_pid_integral + error / self.freq, -0.05, 0.05)
                         derivative = (error - self.force_pid_previous_error) * self.freq
                         self.force_pid_previous_error = error
-                        correction = 0.003 * error + 0.001 * derivative
+                        correction = 0.0035 * error + 0.001 * derivative
                         correction = float(np.clip(correction, -0.0035, 0.0035))
                         self.cmd.position.z += correction / self.freq
                         ##保存z方向的偏移量，后续轨迹规划的起点为当前点加上这个偏移量
                         self.z_delta += correction / self.freq
                         self.get_logger().info(f'Contact force adjustment: error={error:.4f}, correction={correction:.6f}')
+
+                    # if self.count < self.window_size:  ##计算最近若干个值的均值
+                    #     self.sum += r_vec
+                    #     self.buffer[self.pos] = r_vec
+                    #     self.count += 1
+                    #     self.pos = (self.pos + 1) % self.window_size
+                    # else:
+                    #     self.sum += r_vec - self.buffer[self.pos]
+                    #     self.buffer[self.pos] = r_vec
+                    #     self.pos = (self.pos + 1) % self.window_size
+                    #     r_projec_mean = self.sum / self.count
+
                 else:
                     ##发布A_star得到的期望目标点，执行轨迹规划的结果
                     if self.X is not None:
                         if self.n_now < self.X.shape[0]:  ##轨迹追踪还没有进行完
+                            trajectory_index = self.n_now
                             current_pose = np.array(
                                 [self.current.position.x, self.current.position.y, self.current.position.z])
-                            last_pose = np.array([self.X[self.n_now], self.Y[self.n_now], self.Z[self.n_now]])
+                            last_pose = np.array([self.X[trajectory_index], self.Y[trajectory_index], self.Z[trajectory_index]])
                             if self.contact_active: ##已经接触的话只比较x和y方向的误差
                                 current_pose = np.array([self.current.position.x, self.current.position.y, 0.0])
-                                last_pose = np.array([self.X[self.n_now], self.Y[self.n_now], 0.0])
+                                last_pose = np.array([self.X[trajectory_index], self.Y[trajectory_index], 0.0])
                             ## 姿态误差的计算
                             current_quat = np.array([self.current.orientation.x, self.current.orientation.y,
                                                      self.current.orientation.z, self.current.orientation.w])
-                            last_quat = self.Q[self.n_now]
-                            if (np.linalg.norm(current_pose - last_pose) < 0.002 and
-                                    abs(np.arccos(np.clip(np.dot(current_quat, last_quat), -1.0,
-                                                          1.0)) * 2.0) < 0.002):  ##与上一个目标点的误差足够小，开始发布下一个目标点
-                                self.n_now += 1
-                                if self.n_now < self.X.shape[0]:
-                                    next_pose = np.array([self.X[self.n_now], self.Y[self.n_now], self.Z[self.n_now]])
-                                    self.v_vec = next_pose - last_pose  ##运动方向矢量
+                            last_quat = self.Q[trajectory_index]
+                            self.n_now += 1
+                            if self.n_now < self.X.shape[0]:
+                                next_pose = np.array([self.X[self.n_now], self.Y[self.n_now], self.Z[self.n_now]])
+                                self.v_vec = next_pose - last_pose  ##运动方向矢量
                             else:
-                                self.v_vec = last_pose - current_pose
+                                self.v_vec = np.zeros(3, dtype=float)
 
-                            force_norm = np.linalg.norm(f_vec)
-                            moment_norm = np.linalg.norm(r_vec)
-                            force_in_target_range = 0.5 < force_norm < 4.0
-                            moment_in_target_range = 0.5 < moment_norm < 40.0
-                            in_target_range = force_in_target_range and moment_in_target_range
-                            
                             if in_target_range:
                                 if self.contact_active is False:
                                     self.contact_active = True
                                     self.contact_start_frame = len(self.Pose) - 1
                                     self.get_logger().info(f'start contact at {self.contact_start_frame} frame')
                             else:
-                                if self.contact_active or force_norm > 3.0 or moment_norm > 50.0:
+                                if self.contact_active or force_norm > 11.0 or moment_norm > 50.0:
                                     self.force_control_flag = True  ##接触力超出阈值，进入接触力调整的阶段
+                                    ##区分wrench调整阶段的调整对象
+                                    self.force_above_flag = not force_in_target_range
+                                    self.moment_above_flag = not moment_in_target_range
+
                                     self.force_pid_integral = 0.0
                                     self.force_pid_previous_error = 0.0
                                     self.force_pid_cycles = 0
                                     self.z_delta = 0.0
                                     self.get_logger().info('Enter contact force adjustment.')
                                     self.get_logger().info(f'r_vec= {r_vec}, f_vec= {f_vec}')
+                                    if self.N == 2 and self.active_probe_motion_count < 8:
+                                        self.n_now = self.X.shape[0]
+                                        self.get_logger().info(
+                                            'Active stiffness probe stopped because wrench left target range.')
             
-                            if self.n_now < self.X.shape[0]:  ##轨迹还未执行完，继续执行轨迹
-                                self.cmd.position.x = self.X[self.n_now] + delta_x / self.freq
-                                self.cmd.position.y = self.Y[self.n_now] + delta_y / self.freq
-                                self.cmd.position.z = self.cmd.position.z + delta_z / self.freq if self.contact_active else self.Z[self.n_now] + delta_z / self.freq ##如果已经接触了，就不再使用轨迹规划的z值，而是使用当前的z值加上偏移量
-                                # orientation 可插值或保持初始
-                                self.cmd.orientation.x = self.Q[self.n_now][0]
-                                self.cmd.orientation.y = self.Q[self.n_now][1]
-                                self.cmd.orientation.z = self.Q[self.n_now][2]
-                                self.cmd.orientation.w = self.Q[self.n_now][3]
+                            # if (self.N == 2 and self.active_probe_motion_count < 8
+                            #         and not in_target_range):
+                            #     pass
+                            if trajectory_index < self.X.shape[0]:  ##轨迹还未执行完，继续执行轨迹
+                                desired_position = np.array([
+                                    self.X[trajectory_index] + delta_x,
+                                    self.Y[trajectory_index] + delta_y,
+                                    self.Z[trajectory_index] + delta_z if (not self.contact_active or self.N == 2) else self.cmd.position.z + self.admittance_velocity[2] / self.freq
+                                ])
+                                smoothed_position = self._smooth_trajectory_position(desired_position)
+                                self.cmd.position.x, self.cmd.position.y, self.cmd.position.z = smoothed_position
+                                compliant_quat = self._apply_orientation_offset(
+                                    self.Q[trajectory_index], delta_quat)
+                                self.cmd.orientation.x = compliant_quat[0]
+                                self.cmd.orientation.y = compliant_quat[1]
+                                self.cmd.orientation.z = compliant_quat[2]
+                                self.cmd.orientation.w = compliant_quat[3]
 
                             else:
-                                self.cmd.position.x += delta_x / self.freq
-                                self.cmd.position.y += delta_y / self.freq
-                                self.cmd.position.z += delta_z / self.freq
+                                self.cmd.position.x += self.admittance_velocity[0] / self.freq
+                                self.cmd.position.y += self.admittance_velocity[1] / self.freq
+                                self.cmd.position.z += self.admittance_velocity[2] / self.freq
+                                current_quat = np.array([
+                                    self.cmd.orientation.x, self.cmd.orientation.y,
+                                    self.cmd.orientation.z, self.cmd.orientation.w
+                                ])
+                                compliant_quat = self._apply_orientation_offset(
+                                    current_quat,
+                                    R.from_rotvec(self.admittance_velocity[3:] / self.freq).as_quat())
+                                self.cmd.orientation.x = compliant_quat[0]
+                                self.cmd.orientation.y = compliant_quat[1]
+                                self.cmd.orientation.z = compliant_quat[2]
+                                self.cmd.orientation.w = compliant_quat[3]
 
                         else:
                             ## 重置以接收新目标
                             self.get_logger().info('Trajectory complete.')
+                            if self.N == 2:
+                                self.active_probe_motion_count += 1
                             self.initial = None
                             self.total_time = 0.0
                             self.n_now = 0
+                            self._trajectory_command_position = None
+                            self._trajectory_velocity[:] = 0.0
+                            self.admittance_displacement[:] = 0.0
+                            self.admittance_velocity[:] = 0.0
                             self.X, self.Y, self.Z, self.Q = None, None, None, None
                             self.force_inside_flag = False
+                            self.force_above_flag = False
+                            self.moment_above_flag = False
                             self.z_delta = 0.0
-                            self.N += 1
+                            if self.N == 2:
+                                if self.active_probe_motion_count > 8:
+                                    self._estimate_active_stiffness_and_normal()
+                                    self.active_probe_start_frame = None
+                                    self.active_probe_origin = None
+                                    self.active_probe_motion_count = 0
+                                    self.N += 1
+                            elif self.N == 3:
+                                self.contact_rotation_motion_count += 1
+                                if self.contact_rotation_motion_count >= len(self.small_rotation_sequence):
+                                    self.contact_rotation_motion_count = 0
+                                    self.N += 1
+                            else:
+                                self.N += 1
 
                     else:
                         if self.N < 4:
@@ -1294,14 +1798,17 @@ class MinimumJerkPosePlanner(Node):
                         self._start_contact_line_estimation_async()
                     self.get_logger().info(f'N={self.N}')
                     self.get_logger().info(f'F_x= {f_x}, F_y= {f_y}, F_z= {f_z}')
+                    self.get_logger().info(f'Contact region candidates (object frame): {self.contact_region_candidates}')
                     if self.X is not None:
                         self.get_logger().info(
                             f'delta_x= {delta_x}, delta_y= {delta_y}, delta_z= {delta_z}, '
-                            f'v_vec= {self.v_vec}, r_vec= {r_vec}, f_vec= {f_vec}, n_now= {self.n_now}/{self.X.shape[0]}')
+                            f'v_vec= {self.v_vec}, r_vec= {np.linalg.norm(r_vec):.2f}/{r_vec}, f_vec= {np.linalg.norm(f_vec):.2f}/{f_vec}, n_now= {self.n_now}/{self.X.shape[0]}'
+                            f'mu= {self.friction_coefficient:.3f}, slip_score= {self._tactile_feature_score:.3f}')
                     if self.force_control_flag:
                         self.get_logger().info(
                             f'delta_x= {delta_x}, delta_y= {delta_y}, delta_z= {delta_z}, '
-                            f'v_vec= {self.v_vec}, r_vec= {r_vec}, f_vec= {f_vec}')
+                            f'v_vec= {self.v_vec}, r_vec= {np.linalg.norm(r_vec):.2f}/{r_vec}, f_vec= {np.linalg.norm(f_vec):.2f}/{f_vec}'
+                            f'mu= {self.friction_coefficient:.3f}, slip_score= {self._tactile_feature_score:.3f}')
                     with self.contact_line_lock:
                         contact_line_rebuild_result = self.contact_line_rebuild_result
                     if contact_line_rebuild_result is not None:
@@ -1383,6 +1890,9 @@ def _append_factor_graph_frame(
         force: np.ndarray,
         moment: np.ndarray,
 ) -> int:
+    estimator.tactile_transforms = np.concatenate(
+        [estimator.tactile_transforms, tactile_transform[None, :, :]], axis=0
+    )
     estimator.gripper_poses = np.concatenate(
         [estimator.gripper_poses, gripper_pose[None, :, :]], axis=0
     )
@@ -1399,6 +1909,12 @@ def _append_factor_graph_frame(
     estimator.initial_object_poses = np.concatenate(
         [estimator.initial_object_poses, object_pose[None, :, :]], axis=0
     )
+    initial_point, initial_direction = initial_line_from_object_poses(
+        estimator.initial_object_poses
+    )
+    estimator.initial_point = np.asarray(initial_point, dtype=float)
+    estimator.initial_direction = normalize(initial_direction)
+
     index = len(estimator.gripper_poses) - 1
     estimator.add_step(index)
     return index
@@ -1428,7 +1944,7 @@ def _current_factor_graph_result(
         "sample_time": sample_time,
         "queued_at": queued_at,
         "compute_seconds": compute_seconds,
-        "representative_point": representative_point,
+        "representative_point": point,
         "representative_direction": direction,
     }
 
@@ -1483,12 +1999,32 @@ def contact_line_estimation_process(input_queue, result_queue) -> None:
                 selected_indices = None
                 pending_frames = []
             if estimator is not None and len(estimator.gripper_poses) >= ESTIMATION_FRAME_MAX_COUNT:
-                _put_latest(result_queue, {
-                    "type": "limit",
-                    "session_id": session_id,
-                    "processed_frames": ESTIMATION_FRAME_MAX_COUNT,
-                })
-                continue
+                initial_point, initial_direction = initial_line_from_object_poses(
+                    estimator.initial_object_poses
+                )
+                retain_count = max(1, int(message["min_frames"]))
+                retain_start = max(
+                    0, len(estimator.gripper_poses) - retain_count
+                )
+                gripper_poses = np.array(
+                    estimator.gripper_poses[retain_start:], copy=True
+                )
+                tactile_transforms = np.array(
+                    estimator.tactile_transforms[retain_start:], copy=True
+                )
+                forces = np.array(estimator.forces[retain_start:], copy=True)
+                moments = np.array(estimator.moments[retain_start:], copy=True)
+                estimator = GtsamContactLineISAM2(
+                    gripper_poses=gripper_poses,
+                    tactile_transforms=tactile_transforms,
+                    initial_point=initial_point,
+                    initial_direction=initial_direction,
+                    forces=forces,
+                    moments=moments,
+                )
+                estimator.tactile_transforms = tactile_transforms
+                for index in range(len(gripper_poses)):
+                    estimator.add_step(index)
 
             started_at = time.perf_counter()
             try:
@@ -1542,6 +2078,7 @@ def contact_line_estimation_process(input_queue, result_queue) -> None:
                         forces=forces,
                         moments=moments,
                     )
+                    estimator.tactile_transforms = tactile_transforms
                     for index in range(len(pending_frames)):
                         estimator.add_step(index)
                     pending_frames = []
@@ -1583,17 +2120,21 @@ class AsyncNpzWriter:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         self.dropped_jobs = 0
+        self.errors = []
 
-    def submit(self, path, **data) -> None:
+    def submit(self, path, *, wait_for_space=False, **data) -> None:
         safe_data = {
             name: list(value) if isinstance(value, list) else np.array(value, copy=True)
             for name, value in data.items()
         }
         job = (str(path), safe_data)
-        try:
-            self._queue.put_nowait(job)
-        except queue.Full:
-            self.dropped_jobs += 1
+        if wait_for_space:
+            self._queue.put(job)
+        else:
+            try:
+                self._queue.put_nowait(job)
+            except queue.Full:
+                self.dropped_jobs += 1
 
     def _run(self) -> None:
         while True:
@@ -1602,7 +2143,10 @@ class AsyncNpzWriter:
                 if job is None:
                     return
                 path, data = job
-                self._savez(path, **data)
+                try:
+                    self._savez(path, **data)
+                except Exception as exc:
+                    self.errors.append((path, repr(exc)))
             finally:
                 self._queue.task_done()
 
@@ -1654,6 +2198,10 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
         self.control_samples = 0
         self.stream_chunk_index = 0
         self.stream_records = []
+        self.force_torque_plot_history = {
+            "Time": [], "F_x": [], "F_y": [], "F_z": [],
+            "R_x": [], "R_y": [], "R_z": [],
+        }
 
     def on_pose(self, msg):
         with self.pose_state_lock:
@@ -1689,7 +2237,7 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
                     if self.i % 100 == 0:
                         self.get_logger().info('Waiting for tac3d information.')
                 else:
-                    if -10 < self.Fr_r[0, 2] < -8 and -10 < self.Fr_l[0, 2] < -8 and self.force_inside_flag == False:
+                    if -10.5 < self.Fr_r[0, 2] < -8 and -10.5 < self.Fr_l[0, 2] < -8 and self.force_inside_flag == False:
                         # self.force_inside_flag = True
                         self.start_time = self.get_clock().now().to_msg().sec + \
                                           self.get_clock().now().to_msg().nanosec * 1e-9
@@ -1785,6 +2333,13 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
         with self.contact_line_lock:
             self.contact_line_rebuild_result = None
         self._drain_estimation_queue()
+        self._slip_feature_history = []
+        self._friction_samples = []
+        self.friction_coefficient = 0.3
+        self.slip_pause = False
+        self.contact_lost_pause = False
+        self._slip_recovery_count = 0
+        self._contact_recovery_count = 0
         _put_latest(self.estimation_queue, {
             "type": "reset",
             "session_id": self.contact_session_id,
@@ -1801,7 +2356,7 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
         self.contact_session_sample_count = 0
 
     def _queue_latest_estimation_sample(self):
-        if not self.contact_active or not self.Pose or not self.R_x:
+        if self.N != 3 or not self.contact_active or not self.Pose or not self.R_x:
             return
         self.contact_session_sample_count += 1
         if (
@@ -1809,9 +2364,6 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
                 and self.contact_session_sample_count % self.contact_line_frame_step != 0
         ):
             return
-        if self.estimation_processed_frames >= ESTIMATION_FRAME_MAX_COUNT:
-            return
-
         sample = {
             "type": "sample",
             "session_id": self.contact_session_id,
@@ -1874,6 +2426,9 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
                 )
 
     def _record_latest_sample(self):
+        self.force_torque_plot_history["Time"].append(self.Time[-1])
+        for name in ("F_x", "F_y", "F_z", "R_x", "R_y", "R_z"):
+            self.force_torque_plot_history[name].append(getattr(self, name)[-1])
         self.stream_records.append({
             "Time": self.Time[-1],
             "Pose": self.Pose[-1],
@@ -1967,8 +2522,10 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
 
     def request_final_save(self):
         self._flush_stream_records()
+        self._save_force_torque_plot()
         self.async_writer.submit(
             'Force_data_decoupled_final.npz',
+            wait_for_space=True,
             Fordis_left=self.Force_dis_left,
             Fordis_right=self.Force_dis_right,
             Matrix_left=self.Matrix_left,
@@ -1988,6 +2545,45 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
             Quat=self.Quat,
             slip_score=self.Slip_score,
         )
+
+    def _save_force_torque_plot(self):
+        """Save the complete force and moment time histories as one figure."""
+        history = self.force_torque_plot_history
+        sample_count = min(len(history[name]) for name in history)
+        if sample_count == 0:
+            return
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+
+            time_data = np.asarray(history["Time"][:sample_count], dtype=float)
+            if (not np.all(np.isfinite(time_data)) or
+                    np.any(np.diff(time_data) < 0.0)):
+                time_data = np.arange(sample_count, dtype=float) / self.freq
+            else:
+                time_data -= time_data[0]
+            figure, (force_axis, moment_axis) = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
+            force_axis.plot(time_data, history["F_x"][:sample_count], label='F_x')
+            force_axis.plot(time_data, history["F_y"][:sample_count], label='F_y')
+            force_axis.plot(time_data, history["F_z"][:sample_count], label='F_z')
+            force_axis.set_ylabel('Force')
+            force_axis.set_title('End-effector force and moment history')
+            force_axis.grid(True, alpha=0.3)
+            force_axis.legend()
+            moment_axis.plot(time_data, history["R_x"][:sample_count], label='R_x')
+            moment_axis.plot(time_data, history["R_y"][:sample_count], label='R_y')
+            moment_axis.plot(time_data, history["R_z"][:sample_count], label='R_z')
+            moment_axis.set_xlabel('Time (s)')
+            moment_axis.set_ylabel('Moment')
+            moment_axis.grid(True, alpha=0.3)
+            moment_axis.legend()
+            figure.tight_layout()
+            figure.savefig('Force_torque_time_series.png', dpi=150)
+            plt.close(figure)
+            self.get_logger().info('Saved force/moment time-series plot: Force_torque_time_series.png')
+        except Exception as exc:
+            self.get_logger().error(f'Failed to save force/moment time-series plot: {exc}')
 
     def shutdown_workers(self):
         self._flush_stream_records()
