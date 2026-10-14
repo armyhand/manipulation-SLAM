@@ -1,0 +1,230 @@
+{
+  "environment": {
+    "python": "3.12.7 | packaged by Anaconda, Inc. | (main, Oct  4 2024, 13:27:36) [GCC 11.2.0]",
+    "numpy": "1.26.4",
+    "scipy": "1.13.1",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35",
+    "processor": "x86_64"
+  },
+  "frames_per_scenario": 1000,
+  "warmup_per_scenario": 100,
+  "tactile_points_per_side": 50,
+  "period_ms": 10.0,
+  "scope": "Sequential offline synthetic replay; no ROS, DDS, robot or real-time scheduler.",
+  "profiles": {
+    "unrestricted_timing": [
+      {
+        "scenario": "diagonal",
+        "configured_solver_budget_ms": 1000000.0,
+        "cold_start": {
+          "step_ms": 5.717207999623497,
+          "solver_ms": 3.0655520004074788,
+          "success": true
+        },
+        "solver": {
+          "count": 1000,
+          "mean_ms": 1.706191994022447,
+          "p50_ms": 1.6464389996144746,
+          "p95_ms": 2.2464330496859475,
+          "p99_ms": 2.593503639654955,
+          "max_ms": 3.150050000840565,
+          "over_budget": 0,
+          "budget_ms": 6.0
+        },
+        "controller_step": {
+          "count": 1000,
+          "mean_ms": 3.5824320599949715,
+          "p50_ms": 3.472794000117574,
+          "p95_ms": 4.358658400542481,
+          "p99_ms": 5.256138159720649,
+          "max_ms": 5.649542000355723,
+          "over_budget": 0,
+          "budget_ms": 10.0
+        },
+        "iterations_mean": 1.0,
+        "iterations_max": 1,
+        "modes": {
+          "tracking": 1000
+        },
+        "solver_failures": {}
+      },
+      {
+        "scenario": "coupled_near_cone",
+        "configured_solver_budget_ms": 1000000.0,
+        "cold_start": {
+          "step_ms": 3.6594339999282965,
+          "solver_ms": 2.0072699999218457,
+          "success": true
+        },
+        "solver": {
+          "count": 1000,
+          "mean_ms": 1.678976193017661,
+          "p50_ms": 1.6101305000120192,
+          "p95_ms": 2.2229426497688105,
+          "p99_ms": 2.5748507694879663,
+          "max_ms": 3.150931999698514,
+          "over_budget": 0,
+          "budget_ms": 6.0
+        },
+        "controller_step": {
+          "count": 1000,
+          "mean_ms": 3.519831993005937,
+          "p50_ms": 3.396526999949856,
+          "p95_ms": 4.394264849906903,
+          "p99_ms": 5.321791929472965,
+          "max_ms": 5.684727999323513,
+          "over_budget": 0,
+          "budget_ms": 10.0
+        },
+        "iterations_mean": 1.0,
+        "iterations_max": 1,
+        "modes": {
+          "tracking": 1000
+        },
+        "solver_failures": {}
+      },
+      {
+        "scenario": "weak_probe",
+        "configured_solver_budget_ms": 1000000.0,
+        "cold_start": {
+          "step_ms": 3.34705900058907,
+          "solver_ms": 1.7510600000605336,
+          "success": true
+        },
+        "solver": {
+          "count": 1000,
+          "mean_ms": 2.323419568002464,
+          "p50_ms": 1.656052500493388,
+          "p95_ms": 3.6586481998256204,
+          "p99_ms": 4.306792009710987,
+          "max_ms": 5.810464000205684,
+          "over_budget": 0,
+          "budget_ms": 6.0
+        },
+        "controller_step": {
+          "count": 1000,
+          "mean_ms": 4.199425573009648,
+          "p50_ms": 3.5715905000870407,
+          "p95_ms": 5.583178150118329,
+          "p99_ms": 6.501613149739567,
+          "max_ms": 9.170076999907906,
+          "over_budget": 0,
+          "budget_ms": 10.0
+        },
+        "iterations_mean": 2.755,
+        "iterations_max": 6,
+        "modes": {
+          "tracking": 1000
+        },
+        "solver_failures": {}
+      }
+    ],
+    "production_budget": [
+      {
+        "scenario": "diagonal",
+        "configured_solver_budget_ms": 6.0,
+        "cold_start": {
+          "step_ms": 3.607386999647133,
+          "solver_ms": 1.890390999506053,
+          "success": true
+        },
+        "solver": {
+          "count": 1000,
+          "mean_ms": 1.6273663029978707,
+          "p50_ms": 1.580991499395168,
+          "p95_ms": 2.111669100531799,
+          "p99_ms": 2.358363799203289,
+          "max_ms": 3.306264000457304,
+          "over_budget": 0,
+          "budget_ms": 6.0
+        },
+        "controller_step": {
+          "count": 1000,
+          "mean_ms": 3.4116191260118285,
+          "p50_ms": 3.340357000070071,
+          "p95_ms": 3.9029519495215936,
+          "p99_ms": 4.813822380465353,
+          "max_ms": 6.0932149999644025,
+          "over_budget": 0,
+          "budget_ms": 10.0
+        },
+        "iterations_mean": 1.0,
+        "iterations_max": 1,
+        "modes": {
+          "tracking": 1000
+        },
+        "solver_failures": {}
+      },
+      {
+        "scenario": "coupled_near_cone",
+        "configured_solver_budget_ms": 6.0,
+        "cold_start": {
+          "step_ms": 3.4506940000937902,
+          "solver_ms": 1.879932000520057,
+          "success": true
+        },
+        "solver": {
+          "count": 1000,
+          "mean_ms": 1.642633143997955,
+          "p50_ms": 1.5795340000295255,
+          "p95_ms": 2.1565986505265755,
+          "p99_ms": 2.3792178498661087,
+          "max_ms": 2.6160610004808404,
+          "over_budget": 0,
+          "budget_ms": 6.0
+        },
+        "controller_step": {
+          "count": 1000,
+          "mean_ms": 3.4477927790021567,
+          "p50_ms": 3.34809200012387,
+          "p95_ms": 4.148388600469843,
+          "p99_ms": 4.691320600177277,
+          "max_ms": 5.279320000227017,
+          "over_budget": 0,
+          "budget_ms": 10.0
+        },
+        "iterations_mean": 1.0,
+        "iterations_max": 1,
+        "modes": {
+          "tracking": 1000
+        },
+        "solver_failures": {}
+      },
+      {
+        "scenario": "weak_probe",
+        "configured_solver_budget_ms": 6.0,
+        "cold_start": {
+          "step_ms": 3.555290999429417,
+          "solver_ms": 1.9637089999378077,
+          "success": true
+        },
+        "solver": {
+          "count": 1000,
+          "mean_ms": 2.4137356439932773,
+          "p50_ms": 1.7759369993655127,
+          "p95_ms": 4.144776250541327,
+          "p99_ms": 4.958881000020483,
+          "max_ms": 5.931423000220093,
+          "over_budget": 0,
+          "budget_ms": 6.0
+        },
+        "controller_step": {
+          "count": 1000,
+          "mean_ms": 4.367160281000906,
+          "p50_ms": 3.8279720001810347,
+          "p95_ms": 6.229451000399419,
+          "p99_ms": 7.463994319523408,
+          "max_ms": 9.280205999857571,
+          "over_budget": 0,
+          "budget_ms": 10.0
+        },
+        "iterations_mean": 2.755,
+        "iterations_max": 6,
+        "modes": {
+          "tracking": 1000
+        },
+        "solver_failures": {}
+      }
+    ]
+  }
+}

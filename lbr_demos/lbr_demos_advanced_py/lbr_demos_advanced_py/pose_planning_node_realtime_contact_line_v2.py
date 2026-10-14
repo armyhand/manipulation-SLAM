@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Tuple
 from .contact_analysis import estimate_rotation_center
+from .n3_contact_optimizer import N3ContactConfig, N3ContactOptimizer
 
 CONTACT_GRAPH_DIR = Path(
     "/home/armyhand/contact_point_estimation_and_scene_reconstruct/robot_pivoting_estimate"
@@ -56,6 +57,7 @@ except Exception as exc:
 260907问题：接触转动过程接触过程复杂：触觉传感器算一层弹簧，机械臂控制算另一层。（解决方法：引入导纳-力控混合控制，运动过程严格遵循发布的时序，接触后使用导纳控制进行位置的调整；如果力超过安全阈值，那么进入力控制阶段）
 技术路线：1）引入导纳-力混合控制，实现柔顺接触偏转；检测点、线估计结果。2）引入准静态摩擦模型，实现无滑移偏转；检测点、线估计结果。3）收集点偏转、线偏转、面偏转数据，进行对比分析。4）采集力和力矩数据，对接触区域进行粗粒度分类。
 导纳控制已解决，关键在于控制接触速度，使力的变化不至于太剧烈；控制导纳的调整速度，避免过振荡；最后才是刚度和阻尼的调整，对于刚体之间的碰撞，刚度要设置的大一些（>1000），这样才能保证位移较小；阻尼的设置要适当大一些；惯性参数的设置也要大一些（40～100）。
+261012问题：偏转优化过程仍存在不合理现象。
 """
 
 
@@ -85,7 +87,7 @@ class MinimumJerkPosePlanner(Node):
         self.sampling_time = 0.01
         self.freq = 100
         self.velocity = 0.0045 ##轨迹的期望运动速度m/s
-        self.rotation_w = 0.05 ##轨迹的期望角速度rad/s
+        self.rotation_w = 0.02 ##轨迹的期望角速度rad/s
         self.start_time = None
         self.X, self.Y, self.Z = None, None, None
         self.world_rotation_line_point = np.array([0.0, 0.0, 0.0], dtype=np.float64)
@@ -126,6 +128,7 @@ class MinimumJerkPosePlanner(Node):
         self.r_y_mean = None
         self.r_z_mean = None
 
+        self.N_list = []
         self.Force_left = []  # 左手合力集合
         self.Force_right = []  # 右手合力集合
         self.Matrix_left = []
@@ -204,6 +207,13 @@ class MinimumJerkPosePlanner(Node):
         self.active_probe_motion_count = 0
         self.active_contact_stiffness = None
         self.estimated_contact_normal = None
+        self.n3_reference_sample_count = 100
+        self.n3_reference_force_samples = []
+        self.n3_reference_normal_force = None
+        self.n3_reference_tangent_force = None
+        self.n3_reference_ready = False
+        self.mu_safe = None
+        self._n3_lever_arm_segments = []
         self.feature_series_base = None
         self.contact_line_frame_step = 5
         self.contact_line_min_frames = self.contact_line_frame_step + 1
@@ -251,11 +261,13 @@ class MinimumJerkPosePlanner(Node):
     def on_P_l(self, msg: Cloud):
         xyz = np.vstack([msg.row1, msg.row2, msg.row3]).T  # shape (400,3)
         self.P_l = xyz
+        self._n3_note_sample('P_l')
         # self.get_logger().info(f'P_l array shape: {xyz.shape}')
 
     def on_P_r(self, msg: Cloud):
         xyz = np.vstack([msg.row1, msg.row2, msg.row3]).T  # shape (400,3)
         self.P_r = xyz
+        self._n3_note_sample('P_r')
         # self.get_logger().info(f'P_r array shape: {xyz.shape}')
 
     def on_D_l(self, msg: Cloud):
@@ -271,11 +283,13 @@ class MinimumJerkPosePlanner(Node):
     def on_F_l(self, msg: Cloud):
         xyz = np.vstack([msg.row1, msg.row2, msg.row3]).T  # shape (400,3)
         self.F_l = xyz
+        self._n3_note_sample('F_l')
         # self.get_logger().info(f'F_l array shape: {xyz.shape}')
 
     def on_F_r(self, msg: Cloud):
         xyz = np.vstack([msg.row1, msg.row2, msg.row3]).T  # shape (400,3)
         self.F_r = xyz
+        self._n3_note_sample('F_r')
         # self.get_logger().info(f'F_r array shape: {xyz.shape}')
 
     def on_Fr_l(self, msg: Vector3):
@@ -286,6 +300,7 @@ class MinimumJerkPosePlanner(Node):
             z_val = self.clean_single_float(msg.z)
 
             self.Fr_l = np.array([x_val, y_val, z_val]).reshape(1, 3)
+            self._n3_note_sample('Fr_l')
             # self.get_logger().info(f'Fr_l: {self.Fr_l}')
         else:
             self.get_logger().info(f'Don\'t Received left positions array shape')
@@ -298,6 +313,7 @@ class MinimumJerkPosePlanner(Node):
             z_val = self.clean_single_float(msg.z)
 
             self.Fr_r = np.array([x_val, y_val, z_val]).reshape(1, 3)
+            self._n3_note_sample('Fr_r')
             # self.get_logger().info(f'Fr_r: {self.Fr_r}')
         else:
             self.get_logger().info(f'Don\'t Received left positions array shape')
@@ -838,6 +854,10 @@ class MinimumJerkPosePlanner(Node):
         self.active_probe_motion_count = 0
         self.active_contact_stiffness = None
         self.estimated_contact_normal = None
+        self.n3_reference_force_samples = []
+        self.n3_reference_normal_force = None
+        self.n3_reference_tangent_force = None
+        self.n3_reference_ready = False
         self._reset_admittance_state()
         self.contact_line_result = None
         self.contact_line_incremental_result = None
@@ -854,6 +874,7 @@ class MinimumJerkPosePlanner(Node):
             self.contact_line_estimation_thread = None
 
     def on_pose(self, msg):
+        self._n3_note_sample('pose')
         if self.initial is None:  ##确定任务规划的起点
             self.initial = msg
             self.cmd.position.x = self.initial.position.x
@@ -1077,17 +1098,37 @@ class MinimumJerkPosePlanner(Node):
                                                0.0,
                                                math.cos(90.0 * math.pi / 180)]))
 
+                # self.world_rotation_angle = np.deg2rad(5.0)
+                # self.world_rotation_line_point = np.array(
+                #     [self.current.position.x, self.current.position.y, self.current.position.z],
+                #     dtype=np.float64)
+                # self.world_rotation_line_direction = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+                # self.get_logger().info(
+                #     f'The rotation center is {self.world_rotation_line_point}, the direction is {self.world_rotation_line_direction}')
+                # rotation_path_points, rotation_path_quats = self.generate_rotation_path_points(
+                #     start_position=start,
+                #     start_quat=q0,
+                #     line_point=self.world_rotation_line_point,
+                #     line_direction=self.world_rotation_line_direction,
+                #     total_angle=self.world_rotation_angle,
+                #     position_step=self.world_rotation_position_step,
+                # )
+                # Points_recover.extend(rotation_path_points)
+                # Quats_recover.extend(rotation_path_quats)
+
             if self.N == 1:  ##初次接触，一定要有足够的运动幅度（接触之后判断接触大致区域）
                 Points_recover.append(start.copy() + np.array([0.0, 0.0, -0.05]))
                 Points_recover.append(start.copy() + np.array([0.0, 0., -0.1]))
-                Quats_recover.append(np.array([0.0,
-                                               math.sin(89.99 * math.pi / 180),
-                                               0.0,
-                                               math.cos(89.99 * math.pi / 180)]))
-                Quats_recover.append(np.array([0.0,
-                                               math.sin(90.0 * math.pi / 180),
-                                               0.0,
-                                               math.cos(90.0 * math.pi / 180)]))
+                # Quats_recover.append(np.array([0.0,
+                #                                math.sin(89.99 * math.pi / 180),
+                #                                0.0,
+                #                                math.cos(89.99 * math.pi / 180)]))
+                # Quats_recover.append(np.array([0.0,
+                #                                math.sin(90.0 * math.pi / 180),
+                #                                0.0,
+                #                                math.cos(90.0 * math.pi / 180)]))
+                Quats_recover.append(q0.copy())
+                Quats_recover.append(q0.copy())
 
             if self.N == 2:
                 probe_directions = (
@@ -1123,6 +1164,8 @@ class MinimumJerkPosePlanner(Node):
                         self.active_probe_motion_count = 0
                         self.initial = None
                         self.N += 1
+                        if self.N == 3:
+                            self._start_n3_reference_collection()
                         return
                     Points_recover.append(start.copy() + 0.5 * return_offset)
                     Points_recover.append(self.active_probe_origin.copy())
@@ -1132,10 +1175,10 @@ class MinimumJerkPosePlanner(Node):
 
             if self.N == 3: ##在判断接触类型的基础上，选定偏转方向和旋转轴，然后进行偏转，
                 self.small_rotation_sequence = (
-                    (np.deg2rad(-4.0), np.array([0.0, 1.0, 0.0], dtype=np.float64)),
-                    (np.deg2rad(4.0), np.array([0.0, 1.0, 0.0], dtype=np.float64)),
-                    # (np.deg2rad(3.0), np.array([1.0, 0.0, 0.0], dtype=np.float64)),
-                    # (np.deg2rad(-3.0), np.array([1.0, 0.0, 0.0], dtype=np.float64)),
+                    (np.deg2rad(3.0), np.array([1.0, 0.0, 0.0], dtype=np.float64)),
+                    (np.deg2rad(-3.0), np.array([1.0, 0.0, 0.0], dtype=np.float64)),
+                    (np.deg2rad(3.0), np.array([0.0, 1.0, 0.0], dtype=np.float64)),
+                    (np.deg2rad(-3.0), np.array([0.0, 1.0, 0.0], dtype=np.float64)),
                 )
                 rotation_index = min(
                     self.contact_rotation_motion_count,
@@ -1443,6 +1486,360 @@ class MinimumJerkPosePlanner(Node):
         self.get_logger().info(
             f'Active stiffness={np.diag(stiffness)}, contact normal={self.estimated_contact_normal}')
 
+    def _start_n3_reference_collection(self):
+        self.n3_reference_force_samples = []
+        self.n3_reference_normal_force = None
+        self.n3_reference_tangent_force = None
+        self.n3_reference_ready = False
+
+    def _collect_n3_reference_sample(self, force, in_target_range):
+        if self.n3_reference_ready:
+            return True
+        if (not self.contact_active or not in_target_range
+                or self.estimated_contact_normal is None):
+            self.n3_reference_force_samples.clear()
+            return False
+        force = np.asarray(force, dtype=float).reshape(3)
+        normal = np.asarray(self.estimated_contact_normal, dtype=float).reshape(3)
+        normal_norm = np.linalg.norm(normal)
+        if (not np.all(np.isfinite(force)) or not np.all(np.isfinite(normal))
+                or normal_norm < 1.0e-9):
+            self.n3_reference_force_samples.clear()
+            return False
+        normal = normal / normal_norm
+        self.n3_reference_force_samples.append(force.copy())
+        del self.n3_reference_force_samples[:-self.n3_reference_sample_count]
+        if len(self.n3_reference_force_samples) < self.n3_reference_sample_count:
+            return False
+        samples = np.asarray(self.n3_reference_force_samples, dtype=float)
+        if np.any(np.std(samples, axis=0) >= 0.1):
+            return False
+        normal_forces = samples @ normal
+        tangent_forces = np.linalg.norm(samples - normal_forces[:, None] * normal, axis=1)
+        self.n3_reference_normal_force = float(np.mean(normal_forces))
+        self.n3_reference_tangent_force = float(np.mean(tangent_forces))
+        self.n3_reference_ready = True
+        self.get_logger().info(
+            f'N3 reference wrench collected from {len(samples)} stable frames: '
+            f'f_n0={self.n3_reference_normal_force:.6f}N, '
+            f'f_t0={self.n3_reference_tangent_force:.6f}N')
+        return True
+
+
+    def _n3_note_sample(self, name):
+        if self.N == 3:
+            if not hasattr(self, '_n3_input_times'):
+                self._n3_input_times = {}
+            self._n3_input_times[name] = time.monotonic()
+
+    def _apply_n3_wrench_recovery_pid(self, controller, position):
+        status = controller.status
+        if not getattr(self, '_n3_pid_recovery_active', False):
+            self.force_pid_integral = 0.0
+            self.force_pid_previous_error = 0.0
+            self.force_pid_cycles = 0
+            self.force_above_flag = (status['normal_force'] <= 0.1
+                                     or not 0.5 < status['force_norm'] < 10.0)
+            self.moment_above_flag = not 0.05 < status['moment_norm'] < 40.0
+        self._n3_pid_recovery_active = True
+        self.force_control_flag = True
+        error = 0.0
+        if self.force_above_flag:
+            error += status['force_norm'] - 2.3
+        if self.moment_above_flag:
+            error += 0.3 * (status['moment_norm'] - 19.0)
+        self.force_pid_integral = np.clip(
+            self.force_pid_integral + error / self.freq, -0.05, 0.05)
+        derivative = (error - self.force_pid_previous_error) * self.freq
+        self.force_pid_previous_error = error
+        correction = float(np.clip(0.0035 * error + 0.001 * derivative, -0.0035, 0.0035))
+        command_position = position.copy()
+        command_position[2] += correction / self.freq
+        self.z_delta += correction / self.freq
+        controller.command_position = command_position.copy()
+        controller.previous_velocity[:] = 0.0
+        controller.previous_velocity[2] = correction
+        status.update(command_velocity=controller.previous_velocity.copy(),
+                      linear_speed=abs(correction), pid_error=error, pid_correction=correction)
+        self.get_logger().info(
+            f'Contact force adjustment: error={error:.4f}, correction={correction:.6f}')
+        return command_position
+
+    def _record_n3_lever_arm_sample(self, quat):
+        segment = self._n3_lever_arm_segments[-1]
+        force = np.zeros(3)
+        moment = np.zeros(3)
+        clouds = []
+        for points, distributed, indices, rotation, translation in zip(
+                (self.P_l, self.P_r), (self.F_l, self.F_r), segment['indices'],
+                (ROTATION_LEFT_GT, ROTATION_RIGHT_GT), (TRANS_LEFT_GT, TRANS_RIGHT_GT)):
+            positions = np.asarray(points, dtype=float) @ rotation.T + translation
+            forces = np.asarray(distributed, dtype=float) @ rotation.T
+            force += forces.sum(axis=0)
+            moment += np.cross(positions, forces).sum(axis=0)
+            clouds.append(positions[indices])
+        segment['samples'].append((force, moment, np.vstack(clouds), quat.copy()))
+
+    def _report_n3_lever_arm_fits(self, segments):
+        from scipy.optimize import least_squares
+
+        def rigid_fit(source, target):
+            weights = np.ones(len(source))
+            for iteration in range(8):
+                normalized = weights / weights.sum()
+                source_center = normalized @ source
+                target_center = normalized @ target
+                left, singular, right = np.linalg.svd(
+                    ((source - source_center) * normalized[:, None]).T @ (target - target_center))
+                correction = np.diag([1.0, 1.0, np.linalg.det(right.T @ left.T)])
+                rotation = right.T @ correction @ left.T
+                translation = target_center - rotation @ source_center
+                errors = np.linalg.norm(source @ rotation.T + translation - target, axis=1)
+                scale = max(0.01, 1.4826 * np.median(np.abs(errors - np.median(errors))))
+                weights = np.minimum(1.0, 1.345 * scale / np.maximum(errors, 1e-12))
+            return rotation, translation
+
+        for stage_index, segment in enumerate(segments, start=1):
+            axis = segment['axis']
+            direction = ('+' if segment['angle'] >= 0.0 else '-') + 'XYZ'[axis]
+            prefix = (f'（偏转阶段{stage_index}：{direction}；'
+                      f'偏转角度：{abs(np.rad2deg(segment["angle"])):.3f}度；')
+            try:
+                samples = segment['samples']
+                if len(samples) < 8:
+                    raise ValueError('旋转采样不足8帧')
+                source = samples[0][2]
+                forces, moments = [], []
+                for force, moment, cloud, quat in samples:
+                    rotation, translation = rigid_fit(source, cloud)
+                    forces.append(rotation.T @ force)
+                    moments.append(rotation.T @ (moment - np.cross(translation, force)))
+                forces = np.asarray(forces)
+                moments = np.asarray(moments)
+                if not np.all(np.isfinite(forces)) or not np.all(np.isfinite(moments)):
+                    raise ValueError('力或力矩包含无效值')
+                design = np.zeros((len(forces), 3, 3))
+                design[:, 0, 1], design[:, 0, 2] = forces[:, 2], -forces[:, 1]
+                design[:, 1, 0], design[:, 1, 2] = -forces[:, 2], forces[:, 0]
+                design[:, 2, 0], design[:, 2, 1] = forces[:, 1], -forces[:, 0]
+                columns = [component for component in range(3) if component != axis]
+                design = design[:, axis, :][:, columns]
+                target = moments[:, axis]
+                centered = design - design.mean(axis=0)
+                centered_target = target - target.mean()
+                if np.linalg.matrix_rank(centered, tol=1e-8) < 2:
+                    raise ValueError('横向力臂不可辨识：力变化未覆盖两个独立方向')
+                if np.linalg.norm(centered_target) < 1e-12:
+                    raise ValueError('旋转轴力矩变化不足，NRMSE不可计算')
+                initial = np.linalg.lstsq(centered, centered_target, rcond=1e-8)[0]
+                scale = max(float(np.std(centered_target)) * 0.15, 1e-8)
+                result = least_squares(
+                    lambda lever: (centered @ lever - centered_target) / scale,
+                    initial, loss='soft_l1')
+                if not result.success or not np.all(np.isfinite(result.x)):
+                    raise ValueError('力臂拟合未收敛')
+                intercept = np.mean(target - design @ result.x)
+                residual = target - (design @ result.x + intercept)
+                nrmse = np.linalg.norm(residual) / np.linalg.norm(centered_target)
+                lever = np.zeros(3)
+                lever[columns] = result.x
+                lever_text = ','.join(
+                    '不可观测' if component == axis else f'{lever[component]:.6f}'
+                    for component in range(3))
+                self.get_logger().info(
+                    prefix + f'拟合NRMSE：{nrmse:.6f}；参考力臂(mm)：[{lever_text}]；'
+                    f'模式：marker_fixed_origin；采样帧数：{len(samples)}）')
+            except (ValueError, np.linalg.LinAlgError) as exc:
+                self.get_logger().warning(prefix + f'拟合不可用：{exc}）')
+
+    def _publish_n3_optimized(self, force, moment, force_control=False,
+                              wrench_in_target=None):
+        if self.X is None:
+            self.As_planner()
+            return
+        controller = getattr(self, '_n3_optimizer', None)
+        position = np.array([self.current.position.x, self.current.position.y, self.current.position.z])
+        quat = np.array([self.current.orientation.x, self.current.orientation.y,
+                         self.current.orientation.z, self.current.orientation.w])
+        names = ('P_l', 'P_r', 'Fr_l', 'Fr_r', 'F_l', 'F_r', 'pose')
+        arrivals = getattr(self, '_n3_input_times', {})
+        sensor_times = tuple(arrivals.get(name, -np.inf) for name in names)
+        config = N3ContactConfig(linear_speed=self.velocity, angular_speed=self.rotation_w)
+        if self.mu_safe is None:
+            self.mu_safe = 1.2 * (max(0.0, abs(self.n3_reference_tangent_force)) / max(1.0e-9, abs(self.n3_reference_normal_force)))
+        
+        if controller is None:
+            if not self.contact_active or time.monotonic() - min(sensor_times) > config.sensor_timeout:
+                if self.i % 100 == 0:
+                    self.get_logger().warning('N3 waiting for active contact and fresh sensors.')
+                return
+            self._n3_marker_indices = [
+                np.argsort(np.linalg.norm(values, axis=1))[-min(50, len(values)):]
+                for values in (self.F_l, self.F_r)
+            ]
+        clouds = [
+            ((rotation @ np.asarray(points)[indices].T).T + translation) / 1000.0
+            for points, indices, rotation, translation in zip(
+                (self.P_l, self.P_r), self._n3_marker_indices,
+                (ROTATION_LEFT_GT, ROTATION_RIGHT_GT), (TRANS_LEFT_GT, TRANS_RIGHT_GT))
+        ]
+        if controller is None:
+            try:
+                controller = N3ContactOptimizer(
+                    position, quat, clouds, config,
+                    force_bias=np.array([self.f_x_mean, self.f_y_mean, self.f_z_mean]),
+                    normal=self.estimated_contact_normal,
+                    stiffness=self.active_contact_stiffness,
+                    normal_force_reference=self.n3_reference_normal_force,
+                    tangent_force_reference=self.n3_reference_tangent_force,
+                    mu_safe=self.mu_safe)
+            except (ValueError, np.linalg.LinAlgError) as exc:
+                if self.i % 100 == 0:
+                    self.get_logger().error(f'N3 initialization stopped: {exc}')
+                return
+            self._n3_optimizer = controller
+            self._n3_trajectory = None
+        if self._n3_trajectory is not self.X:
+            controller.start_segment()
+            self._n3_trajectory = self.X
+            if self.contact_rotation_motion_count == 0:
+                self._n3_lever_arm_segments = []
+            self._n3_lever_arm_segments.append({
+                'axis': int(np.argmax(np.abs(self.world_rotation_line_direction))),
+                'angle': self.world_rotation_angle,
+                'samples': [],
+                'indices': [
+                    np.argsort(np.median(np.linalg.norm(
+                        np.asarray(history[-30:], dtype=float), axis=2), axis=0))[-80:]
+                    for history in (self.Displacement_left, self.Displacement_right)
+                ],
+                'frame_count': 0,
+            })
+            self._record_n3_lever_arm_sample(quat)
+        if self.n_now < len(self.X):
+            target_position = np.array([self.X[self.n_now], self.Y[self.n_now], self.Z[self.n_now]])
+            command_position, command_quat, advance = controller.step(
+                position, quat, force, moment, target_position, self.Q[self.n_now],
+                self.world_rotation_line_point, clouds, sensor_times, self.contact_active,
+                final_point=self.n_now == len(self.X) - 1,
+                force_control=force_control,
+                wrench_in_target=wrench_in_target)
+            self.mu_safe = float(controller.mu_safe)
+            if advance:
+                segment = self._n3_lever_arm_segments[-1]
+                segment['frame_count'] += 1
+                if segment['frame_count'] % 5 == 0:
+                    previous_quat = segment['samples'][-1][3]
+                    if (R.from_quat(quat) * R.from_quat(previous_quat).inv()).magnitude() > 1e-6:
+                        self._record_n3_lever_arm_sample(quat)
+            if (controller.status.get('mode') == 'recovery'
+                    and controller.status.get('pid_recovery', False)):
+                command_position = self._apply_n3_wrench_recovery_pid(controller, position)
+            elif (getattr(self, '_n3_pid_recovery_active', False)
+                  and controller.wrench_recovery_started_at is None):
+                self._n3_pid_recovery_active = False
+                self.force_control_flag = False
+                self.force_above_flag = False
+                self.moment_above_flag = False
+                self.force_pid_integral = 0.0
+                self.force_pid_previous_error = 0.0
+                self.force_pid_cycles = 0
+            self.cmd.position.x, self.cmd.position.y, self.cmd.position.z = command_position
+            self.cmd.orientation.x, self.cmd.orientation.y, self.cmd.orientation.z, self.cmd.orientation.w = command_quat
+            self.v_vec = controller.previous_velocity[:3].copy()
+            self.n3_optimization_status = controller.status.copy()
+            self.friction_coefficient = float(
+                controller.status.get('mu_max_estimate', self.friction_coefficient))
+            self._friction_samples = list(controller.force_ratios)
+            reason = controller.status.get('reason', '')
+            if self.i % 75 == 0 or reason != getattr(self, '_n3_last_reason', ''):
+                status = controller.status
+                self.get_logger().info(
+                    f'N3 optimizer: point={self.n_now}/{len(self.X)}, '
+                    f'normal_force={status.get("normal_force", float("nan")):.3f}, '
+                    f'tangent_force={status.get("tangent_force", float("nan")):.3f}, '
+                    f'force_norm={status.get("force_norm", float("nan")):.3f}, '
+                    f'moment_norm={status.get("moment_norm", float("nan")):.3f}, '
+                    f'mu_safe={status.get("mu_safe", float("nan")):.4f}, '
+                    f'mu_max_estimate={status.get("mu_max_estimate", float("nan")):.4f}, '
+                    f'friction_limit={status.get("friction_limit", float("nan")):.3f}, '
+                    f'stable_frames={status.get("stable_frames", 0)}/'
+                    f'{status.get("recovery_frames", 0)}, '
+                    f'normal_in_target={status.get("normal_in_target")}, '
+                    f'wrench_in_target={status.get("wrench_in_target")}, '
+                    f'friction_exceeded={status.get("friction_exceeded")}, '
+                    f'friction_adapting={status.get("friction_adapting")}, '
+                    f'hard_constraints={status.get("hard_constraints_ok")}, '
+                    f'tracking_allowed={status.get("tracking_allowed")}, '
+                    f'angle_error={status.get("angle_error", float("nan")):.6f}rad, '
+                    f'angle_error_deg={status.get("angle_error_deg", float("nan")):.4f}, '
+                    f'target_angular_rate={status.get("target_angular_rate", float("nan")):.6f}rad/s, '
+                    f'command_velocity(m/s,rad/s)={status.get("command_velocity")}, '
+                    f'linear_speed={status.get("linear_speed", float("nan")):.6f}m/s, '
+                    f'angular_speed={status.get("angular_speed", float("nan")):.6f}rad/s, '
+                    f'objective={status.get("objective_before", float("nan")):.4f}->'
+                    f'{status.get("objective_after", float("nan")):.4f}, '
+                    f'optimized_delta={status.get("optimized_delta_position")}, '
+                    f'object_motion={status.get("object_motion", float("nan")):.6g}, '
+                    f'wrench_change={status.get("object_wrench_change", float("nan")):.6g}, '
+                    f'solver_success={status.get("solver_success")}, '
+                    f'solver_iterations={status.get("solver_iterations")}, '
+                    f'solver_ms={status.get("solver_ms", float("nan")):.3f}, '
+                    f'controller_ms={status.get("controller_ms", float("nan")):.3f}, '
+                    f'solver_budget_exceeded={status.get("solver_budget_exceeded")}, '
+                    f'controller_budget_exceeded={status.get("controller_budget_exceeded")}, '
+                    f'solver_message={status.get("solver_message")}, '
+                    # f'advance={status.get("advance")}, settled={status.get("settled")}, '
+                    # f'no_progress_seconds={status.get("no_progress_seconds", float("nan")):.3f}, '
+                    f'mode={status.get("mode")}, reason={reason}')
+            self._n3_last_reason = reason
+            if advance:
+                self.n_now += 1
+            if ((reason == 'no_progress_timeout' or reason == 'friction_recovery')
+                    and len(self.X) - 4 <= self.n_now <= len(self.X) - 1):
+                self.get_logger().warning(
+                    'N3 trajectory treated as complete after no_progress_timeout '
+                    f'near the final points ({self.n_now}/{len(self.X)}).')
+                self.contact_rotation_motion_count += 1
+                self.initial = None
+                self.total_time = 0.0
+                self.n_now = 0
+                self.X, self.Y, self.Z, self.Q = None, None, None, None
+                self._trajectory_command_position = None
+                self._trajectory_velocity[:] = 0.0
+                self._reset_admittance_state()
+                self.force_control_flag = False
+                self.force_inside_flag = False
+                self.force_above_flag = False
+                self.moment_above_flag = False
+                self.z_delta = 0.0
+                self._n3_optimizer = None
+                self._n3_trajectory = None
+                if self.contact_rotation_motion_count >= len(self.small_rotation_sequence):
+                    threading.Thread(target=self._report_n3_lever_arm_fits,
+                                     args=(self._n3_lever_arm_segments,), daemon=True).start()
+                    self.contact_rotation_motion_count = 0
+                    self.N += 1
+        else:
+            self.contact_rotation_motion_count += 1
+            self.initial = None
+            self.total_time = 0.0
+            self.n_now = 0
+            self.X, self.Y, self.Z, self.Q = None, None, None, None
+            self._trajectory_command_position = None
+            self._trajectory_velocity[:] = 0.0
+            self._reset_admittance_state()
+            self.force_control_flag = False
+            self.force_inside_flag = False
+            self.force_above_flag = False
+            self.moment_above_flag = False
+            self.z_delta = 0.0
+            if self.contact_rotation_motion_count >= len(self.small_rotation_sequence):
+                threading.Thread(target=self._report_n3_lever_arm_fits,
+                                 args=(self._n3_lever_arm_segments,), daemon=True).start()
+                self.contact_rotation_motion_count = 0
+                self._n3_optimizer = None
+                self.N += 1
 
     def publish_at_time(self):
         self.cmd = copy.deepcopy(self.current)  ##发布量的原始值为当前位置
@@ -1476,6 +1873,7 @@ class MinimumJerkPosePlanner(Node):
                 [self.current.orientation.x, self.current.orientation.y, self.current.orientation.z,
                  self.current.orientation.w]))
             self.Time.append(current_time)
+            self.N_list.append(self.N)
 
             ##检测contact是否开始，然后进行估计
             baseline_frames = 30
@@ -1585,6 +1983,36 @@ class MinimumJerkPosePlanner(Node):
                 self.R_y.append(r_vec[1])
                 self.R_z.append(r_vec[2])
 
+                if self.N == 3:
+                    if getattr(self, '_n3_pid_recovery_active', False):
+                        self.force_control_flag = True
+                    elif not in_target_range:
+                        self.force_control_flag = True
+                        self.force_above_flag = not force_in_target_range
+                        self.moment_above_flag = not moment_in_target_range
+                        self.force_pid_integral = 0.0
+                        self.force_pid_previous_error = 0.0
+                        self.force_pid_cycles = 0
+                    elif self.force_control_flag:
+                        self.force_control_flag = False
+                        self.force_above_flag = False
+                        self.moment_above_flag = False
+                    if not self._collect_n3_reference_sample(f_vec, in_target_range):
+                        self.cmd.position.x = self.current.position.x
+                        self.cmd.position.y = self.current.position.y
+                        self.cmd.position.z = self.current.position.z
+                        self.cmd.orientation.x = self.current.orientation.x
+                        self.cmd.orientation.y = self.current.orientation.y
+                        self.cmd.orientation.z = self.current.orientation.z
+                        self.cmd.orientation.w = self.current.orientation.w
+                        self.pose_pub.publish(self.cmd)
+                        return
+                    self._publish_n3_optimized(
+                        f_vec, r_vec, force_control=self.force_control_flag,
+                        wrench_in_target=in_target_range)
+                    self.pose_pub.publish(self.cmd)
+                    return
+
                 self._update_contact_region(f_vec, r_vec)
                 self._update_contact_safety(f_vec, r_vec)
                 if self.contact_active and not self.force_control_flag:
@@ -1609,7 +2037,7 @@ class MinimumJerkPosePlanner(Node):
                     delta_quat = R.from_rotvec(admittance_offset[3:]).as_quat()
 
                 if self.force_control_flag:  ##接触力调整阶段，保持一个恒定的接触力（目前为z方向恒定，后续扩展到其他方向）
-                    target_range_adjust = (0.5 < moment_norm < 30.0 and 1.6 < force_norm < 2.0) or (18 < moment_norm < 22.0 and 0.7 < force_norm < 2.0)
+                    target_range_adjust = (0.5 < moment_norm < 40.0 and 2.1 < force_norm < 2.5) if self.force_above_flag and not self.moment_above_flag else (18 < moment_norm < 22.0 and 0.7 < force_norm < 2.0)
 
                     if target_range_adjust:
                         self.force_control_flag = False
@@ -1633,7 +2061,7 @@ class MinimumJerkPosePlanner(Node):
                             self.N += 1
                     else:
                         # self.force_pid_cycles += 1
-                        target_moment, target_force = 19.0, 1.7
+                        target_moment, target_force = 19.0, 2.3
                         if self.force_above_flag and not self.moment_above_flag:
                             error = force_norm - target_force
                         elif self.moment_above_flag and not self.force_above_flag:
@@ -1770,6 +2198,8 @@ class MinimumJerkPosePlanner(Node):
                                     self.active_probe_origin = None
                                     self.active_probe_motion_count = 0
                                     self.N += 1
+                                    if self.N == 3:
+                                        self._start_n3_reference_collection()
                             elif self.N == 3:
                                 self.contact_rotation_motion_count += 1
                                 if self.contact_rotation_motion_count >= len(self.small_rotation_sequence):
@@ -2188,17 +2618,21 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
         self.last_control_started_at = None
         self.control_period_max = 0.0
         self.control_deadline_misses = 0
+        self.control_execution_max = 0.0
+        self.control_execution_overruns = 0
+        self.control_period_overruns = 0
         self.control_samples = 0
         self.stream_chunk_index = 0
         self.stream_records = []
         self.force_torque_plot_history = {
             "Time": [], "F_x": [], "F_y": [], "F_z": [],
-            "R_x": [], "R_y": [], "R_z": [],
+            "R_x": [], "R_y": [], "R_z": [], "Pose": [],
         }
 
     def on_pose(self, msg):
         with self.pose_state_lock:
             self.latest_pose = copy.deepcopy(msg)
+            self._n3_note_sample('pose')
 
     def on_Mr_l(self, msg):
         super().on_Mr_l(msg)
@@ -2294,6 +2728,8 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
             self.control_period_max = max(self.control_period_max, period)
             if period > CONTROL_PERIOD_SECONDS * 1.5:
                 self.control_deadline_misses += 1
+            if period > CONTROL_PERIOD_SECONDS:
+                self.control_period_overruns += 1
         self.last_control_started_at = started_at
         self.control_samples += 1
 
@@ -2317,6 +2753,10 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
         if self.contact_active is False and previous_contact_active is True:
             self._end_contact_session()
         self._poll_estimation_results()
+
+        execution_seconds = time.perf_counter() - started_at
+        self.control_execution_max = max(self.control_execution_max, execution_seconds)
+        self.control_execution_overruns += int(execution_seconds > CONTROL_PERIOD_SECONDS)
 
     def _begin_contact_session(self):
         self.contact_session_id += 1
@@ -2417,9 +2857,16 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
                         result["representative_direction"], dtype=float, copy=True
                     ),
                 )
+            self.get_logger().info(
+                f'rebuild_contact_point(mm)= {result["representative_point"]}, '
+                f'rebuild_contact_line= {result["representative_direction"]}, '
+                f'estimation_frames={self.estimation_processed_frames}',
+                throttle_duration_sec=1.0,
+            )
 
     def _record_latest_sample(self):
         self.force_torque_plot_history["Time"].append(self.Time[-1])
+        self.force_torque_plot_history["Pose"].append(np.array(self.Pose[-1], copy=True))
         for name in ("F_x", "F_y", "F_z", "R_x", "R_y", "R_z"):
             self.force_torque_plot_history[name].append(getattr(self, name)[-1])
         self.stream_records.append({
@@ -2440,6 +2887,7 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
             "Displacement_right": self.Displacement_right[-1],
             "Matrix_left": self.Mr_l,
             "Matrix_right": self.Mr_r,
+            "N": self.N_list,
         })
         if len(self.stream_records) >= HISTORY_MAX_FRAMES:
             self._flush_stream_records()
@@ -2476,6 +2924,7 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
             self.Pose,
             self.Time,
             self.Quat,
+            self.N_list,
         )
         for history in aligned_histories:
             if len(history) > HISTORY_MAX_FRAMES:
@@ -2504,6 +2953,9 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
         self.get_logger().info(
             f'control_max_period={self.control_period_max * 1000.0:.2f}ms, '
             f'deadline_misses={self.control_deadline_misses}, '
+            f'control_period_over_10ms={self.control_period_overruns}, '
+            f'control_execution_max={self.control_execution_max * 1000.0:.2f}ms, '
+            f'control_execution_over_10ms={self.control_execution_overruns}, '
             f'estimation_queue={queue_size}/{ESTIMATION_QUEUE_MAX_SIZE}, '
             f'estimation_dropped={self.estimation_dropped_frames}, '
             f'estimation_frames={self.estimation_processed_frames}/{ESTIMATION_FRAME_MAX_COUNT}, '
@@ -2512,6 +2964,9 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
         )
         self.control_period_max = 0.0
         self.control_deadline_misses = 0
+        self.control_execution_max = 0.0
+        self.control_execution_overruns = 0
+        self.control_period_overruns = 0
 
     def request_final_save(self):
         self._flush_stream_records()
@@ -2537,10 +2992,11 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
             Time=self.Time,
             Quat=self.Quat,
             slip_score=self.Slip_score,
+            N = self.N
         )
 
     def _save_force_torque_plot(self):
-        """Save the complete force and moment time histories as one figure."""
+        """Save complete force/moment and end-effector position time histories."""
         history = self.force_torque_plot_history
         sample_count = min(len(history[name]) for name in history)
         if sample_count == 0:
@@ -2575,8 +3031,23 @@ class DecoupledMinimumJerkPosePlanner(MinimumJerkPosePlanner):
             figure.savefig('Force_torque_time_series.png', dpi=150)
             plt.close(figure)
             self.get_logger().info('Saved force/moment time-series plot: Force_torque_time_series.png')
+
+            position_data = np.asarray(history["Pose"][:sample_count], dtype=float) * 1000.0
+            figure, axes = plt.subplots(3, 1, sharex=True, figsize=(12, 9))
+            for coordinate, (axis, label) in enumerate(zip(axes, ('X', 'Y', 'Z'))):
+                axis.plot(time_data, position_data[:, coordinate], label=label)
+                axis.set_ylabel(f'{label} (mm)')
+                axis.grid(True, alpha=0.3)
+                axis.legend()
+            axes[0].set_title('End-effector position history')
+            axes[-1].set_xlabel('Time (s)')
+            figure.tight_layout()
+            figure.savefig('End_effector_position_time_series.png', dpi=150)
+            plt.close(figure)
+            self.get_logger().info(
+                'Saved end-effector position time-series plot: End_effector_position_time_series.png')
         except Exception as exc:
-            self.get_logger().error(f'Failed to save force/moment time-series plot: {exc}')
+            self.get_logger().error(f'Failed to save force/moment or position time-series plot: {exc}')
 
     def shutdown_workers(self):
         self._flush_stream_records()
